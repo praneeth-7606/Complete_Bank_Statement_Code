@@ -1,0 +1,236 @@
+import { useState, useEffect } from 'react'
+import { Download, Loader2 } from 'lucide-react'
+import { motion } from 'framer-motion'
+import { Button } from '../components/common'
+import FilterBar from '../components/transactions/FilterBar'
+import TransactionTable from '../components/transactions/TransactionTable'
+import { pageTransition } from '../utils/animations'
+import { statementsAPI } from '../services/api'
+import api from '../services/api'
+import toast from 'react-hot-toast'
+
+const Transactions = () => {
+  // Filter state
+  const [filters, setFilters] = useState({
+    category: 'all',
+    type: 'all',
+    search: ''
+  })
+  
+  // Pagination state
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 20,
+    total: 0,
+    totalPages: 0
+  })
+  
+  // Data state
+  const [transactions, setTransactions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+
+  // Fetch transactions with filters and pagination
+  const fetchTransactions = async (pageNum = 1) => {
+    try {
+      setLoading(true)
+      setError(null)
+      
+      // Build query parameters
+      const params = {
+        page: pageNum,
+        limit: pagination.limit
+      }
+      
+      if (filters.category && filters.category !== 'all') {
+        params.category = filters.category
+      }
+      if (filters.type && filters.type !== 'all') {
+        params.type = filters.type
+      }
+      if (filters.search && filters.search.trim()) {
+        params.search = filters.search.trim()
+      }
+      
+      // Fetch from backend using axios
+      const response = await api.get('/api/transactions/filtered', { params })
+      
+      if (response.data.status === 'success') {
+        setTransactions(response.data.data.transactions)
+        setPagination({
+          page: response.data.data.page,
+          limit: response.data.data.limit,
+          total: response.data.data.total,
+          totalPages: response.data.data.total_pages
+        })
+      } else {
+        throw new Error('Invalid response from server')
+      }
+    } catch (error) {
+      console.error('Error fetching transactions:', error)
+      setError(error.message || 'Failed to load transactions')
+      toast.error('Failed to load transactions')
+      setTransactions([])
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Fetch on component mount
+  useEffect(() => {
+    fetchTransactions(1)
+  }, [])
+
+  // Refetch when filters change
+  useEffect(() => {
+    fetchTransactions(1)
+  }, [filters])
+
+  const handleFilterChange = ({ category, type }) => {
+    setFilters(prev => ({
+      ...prev,
+      category: category === 'all' ? 'all' : category,
+      type: type === 'all' ? 'all' : type
+    }))
+  }
+
+  const handleSearchChange = (term) => {
+    setFilters(prev => ({
+      ...prev,
+      search: term
+    }))
+  }
+
+  const handlePageChange = (page) => {
+    fetchTransactions(page)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  const handleExport = () => {
+    const csv = [
+      ['Date', 'Description', 'Category', 'Type', 'Amount'],
+      ...transactions.map(t => [
+        t.date,
+        t.description,
+        t.category || 'N/A',
+        t.credit > 0 ? 'income' : 'expense',
+        t.amount
+      ])
+    ].map(row => row.join(',')).join('\n')
+
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = window.URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`
+    a.click()
+  }
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <div className="text-center">
+          <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mx-auto mb-4" />
+          <p className="text-gray-600 text-lg">Loading transactions...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <motion.div {...pageTransition} className="space-y-6">
+        <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6">
+          <h3 className="text-lg font-semibold text-red-900 mb-2">Error Loading Transactions</h3>
+          <p className="text-red-700 mb-4">{error}</p>
+          <Button
+            variant="primary"
+            onClick={() => fetchTransactions(1)}
+          >
+            Retry
+          </Button>
+        </div>
+      </motion.div>
+    )
+  }
+
+  return (
+    <motion.div {...pageTransition} className="space-y-4 sm:space-y-6">
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+        <div>
+          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">Transactions</h2>
+          <p className="text-xs sm:text-sm text-gray-600 mt-1">
+            Showing {transactions.length} of {pagination.total} transactions
+          </p>
+        </div>
+        <Button
+          variant="primary"
+          icon={Download}
+          iconPosition="left"
+          onClick={handleExport}
+          disabled={transactions.length === 0}
+          className="w-full sm:w-auto"
+        >
+          Export CSV
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <FilterBar
+        onFilterChange={handleFilterChange}
+        onSearchChange={handleSearchChange}
+      />
+
+      {/* Transactions Table */}
+      {transactions.length > 0 ? (
+        <TransactionTable
+          transactions={transactions}
+          onSort={(field, direction) => {
+            // Sorting is handled by backend, but we can implement client-side sorting if needed
+          }}
+        />
+      ) : (
+        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8 text-center">
+          <p className="text-gray-600">No transactions found matching your filters.</p>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {transactions.length > 0 && pagination.totalPages > 1 && (
+        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg border border-gray-100 p-3 sm:p-4">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
+            <p className="text-xs sm:text-sm text-gray-600 text-center sm:text-left">
+              Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
+            </p>
+            <div className="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handlePageChange(pagination.page - 1)}
+                disabled={pagination.page === 1}
+                className="flex-1 sm:flex-none"
+              >
+                Previous
+              </Button>
+              <span className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
+                {pagination.page} / {pagination.totalPages}
+              </span>
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => handlePageChange(pagination.page + 1)}
+                disabled={pagination.page === pagination.totalPages}
+                className="flex-1 sm:flex-none"
+              >
+                Next
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
+    </motion.div>
+  )
+}
+
+export default Transactions
