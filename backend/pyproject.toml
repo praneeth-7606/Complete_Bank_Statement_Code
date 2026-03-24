@@ -1,0 +1,37 @@
+[project]
+name = "drug-alter"
+version = "0.1.0"
+description = "AI-powered financial statement processing system"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "langchain>=0.3.0",
+    "langchain-google-genai>=2.0.0",
+    "langgraph>=0.2.0",
+    "langchain-community>=0.3.0",
+    "motor>=3.6.0",
+    "beanie>=1.27.0",
+    "pypdf>=5.1.0",
+    "google-generativeai>=0.8.0",
+    "python-dotenv>=1.0.0",
+    "pydantic>=2.9.0",
+    "python-multipart>=0.0.12",
+    "python-jose[cryptography]>=3.5.0",
+    "passlib[bcrypt]>=1.7.4",
+    "authlib>=1.6.5",
+    "httpx>=0.28.1",
+    "email-validator>=2.3.0",
+    "pinecone>=7.3.0",
+    "pdfplumber>=0.11.7",
+    "mistralai>=1.0.0",
+    "pymupdf>=1.24.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+# THIS IS THE FIX - Tell hatchling where your package is
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
