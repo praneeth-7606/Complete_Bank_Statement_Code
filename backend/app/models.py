@@ -103,10 +103,11 @@ class Correction(Document):
     model_config = {"arbitrary_types_allowed": True}
     transaction_description_keyword: str
     correct_category: str
+    user_id: Optional[str] = None # Personalized learning
 
     class Settings:
         name = "corrections"
-        indexes = ["transaction_description_keyword"]
+        indexes = ["transaction_description_keyword", "user_id"]
 
 # --- Pydantic Models (for API request/response validation) ---
 
@@ -114,6 +115,7 @@ class CorrectionCreate(BaseModel):
     """Model for creating a new correction rule."""
     transaction_description_keyword: str
     correct_category: str
+    user_id: Optional[str] = None
 
 class Analysis(BaseModel):
     """Model for the financial analysis part of the report."""
@@ -131,8 +133,9 @@ class FullReport(BaseModel):
 class ChatQuery(BaseModel):
     """The request model for the chat endpoint."""
     query: str
-    page: int = 1  # Page number for pagination (default: 1)
-    page_size: int = 50  # Number of transactions per page (default: 50)
+    chat_history: Optional[List[Dict[str, str]]] = None # To support session-based state
+    page: int = 1  
+    page_size: int = 50 
 
 class ChatResponse(BaseModel):
     """The response model for the chat endpoint."""

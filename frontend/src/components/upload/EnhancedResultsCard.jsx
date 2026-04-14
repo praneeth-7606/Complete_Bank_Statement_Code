@@ -54,9 +54,11 @@ const EnhancedResultsCard = ({ results, metadata, onReset }) => {
   const {
     total_transactions = 0,
     message = 'Processing complete',
-    analysis = {},
+    analysis: analysisProp = {},
   } = results || {};
 
+  // Ensure analysis is never null even if result.analysis is explicitly null
+  const analysis = analysisProp || {};
   const { summary = {}, insights = [] } = analysis;
 
   return (

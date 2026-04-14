@@ -124,13 +124,15 @@ class PineconeVectorStore:
         
         logger.info(f"Querying Pinecone for: '{query_text}' (top {n_results} results)")
         
-        # Generate embedding for query
+        # Generate embedding for query using the same model as EmbeddingAgent (768-dim, v1beta compatible)
         result = genai.embed_content(
-            model="models/text-embedding-004",
+            model="models/gemini-embedding-001",
             content=query_text,
-            task_type="retrieval_query"
+            task_type="retrieval_query",
+            output_dimensionality=768
         )
         query_embedding = result['embedding']
+
         
         # Prepare query parameters
         query_params = {
@@ -155,6 +157,20 @@ class PineconeVectorStore:
             logger.error(f"Pinecone query failed: {e}", exc_info=True)
             return []
     
+    async def delete_transaction_vector(self, transaction_id: str):
+        """
+        Delete a single transaction vector from Pinecone
+        
+        Args:
+            transaction_id: The ID of the transaction to delete
+        """
+        try:
+            logger.info(f"Deleting vector for transaction_id: {transaction_id}")
+            self.index.delete(ids=[str(transaction_id)], namespace="transactions")
+            logger.info(f"Successfully deleted vector for transaction_id: {transaction_id}")
+        except Exception as e:
+            logger.error(f"Failed to delete vector for transaction_id {transaction_id}: {e}")
+
     async def delete_transactions_by_upload_id(self, upload_id: str):
         """
         Delete all transactions for a specific upload from Pinecone
@@ -164,18 +180,11 @@ class PineconeVectorStore:
         """
         try:
             logger.info(f"Deleting vectors for upload_id: {upload_id}")
-            
-            # Delete by metadata filter
-            self.index.delete(
-                filter={"upload_id": upload_id},
-                namespace="transactions"
-            )
-            
+            self.index.delete(filter={"upload_id": str(upload_id)}, namespace="transactions")
             logger.info(f"Successfully deleted vectors for upload_id: {upload_id}")
         except Exception as e:
-            logger.error(f"Failed to delete vectors for upload_id {upload_id}: {e}", exc_info=True)
-            raise
-    
+            logger.error(f"Failed to delete vectors for upload_id {upload_id}: {e}")
+
     def get_index_stats(self) -> Dict:
         """Get statistics about the Pinecone index"""
         try:

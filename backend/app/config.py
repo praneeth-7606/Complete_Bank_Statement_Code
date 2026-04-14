@@ -19,6 +19,12 @@ class Settings(BaseSettings):
         ENCRYPTION_KEY: str = ""  # Base64-encoded 256-bit key
         ENCRYPTION_SALT: str = ""  # Base64-encoded salt
 
+        # Groww MCP Configuration
+        GROWW_MCP_SERVER_COMMAND: str = ""  # Local stdio command, e.g., "uvx groww-mcp-server"
+        GROWW_MCP_SERVER_URL: str = ""      # Remote SSE URL if applicable
+        GROWW_API_KEY: str = ""
+        GROWW_API_SECRET: str = ""
+
         # This line tells Pydantic to ignore any extra variables found in the .env file
         model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

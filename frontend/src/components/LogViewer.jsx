@@ -51,7 +51,6 @@ const LogViewer = ({ uploadId, onComplete }) => {
             icon: <Database className="w-5 h-5" />,
             duration: 4000,
           });
-          // Browser notification
           notificationManager.backgroundTaskComplete('Database Save');
         }
         
@@ -60,7 +59,6 @@ const LogViewer = ({ uploadId, onComplete }) => {
             icon: <Search className="w-5 h-5" />,
             duration: 5000,
           });
-          // Browser notification
           notificationManager.backgroundTaskComplete('Vector Indexing');
         }
         
@@ -68,29 +66,28 @@ const LogViewer = ({ uploadId, onComplete }) => {
           toast.success('🎉 All done! Your statement is fully processed and ready for Q&A.', {
             icon: <Sparkles className="w-5 h-5" />,
             duration: 6000,
-            style: {
-              background: '#10b981',
-              color: '#fff',
-            },
+            style: { background: '#10b981', color: '#fff' },
           });
-          // Browser notification
           notificationManager.success(
             '🎉 Processing Complete!',
             'Your statement is fully processed and ready for analysis'
           );
         }
         
-        // Check if complete
-        if (logEntry.level === 'complete') {
+        // ── COMPLETION DETECTION ────────────────────────────────────────────
+        // Accept both the old 'complete' level AND progress >= 98 (new backend)
+        // The backend sends level:'success' at 98% and level:'info' at 100%.
+        const isProgressComplete = logEntry.progress !== undefined && logEntry.progress >= 98;
+        if (logEntry.level === 'complete' || isProgressComplete) {
           setIsComplete(true);
           setProgress(100);
           eventSource.close();
           if (onComplete) {
-            onComplete();
+            setTimeout(() => onComplete(), 800); // brief delay so user sees 100%
           }
         }
         
-        // Check for errors
+        // Check for backend errors
         if (logEntry.level === 'error') {
           setError(logEntry.message);
         }
@@ -102,31 +99,33 @@ const LogViewer = ({ uploadId, onComplete }) => {
     eventSource.onerror = (err) => {
       console.error('SSE Error:', err);
       
-      // Check if EventSource is in CLOSED state
       if (eventSource.readyState === EventSource.CLOSED) {
-        // Connection was closed normally (processing complete)
-        if (isComplete || progress === 100) {
-          // This is expected, don't show error
-          return;
-        }
+        // If we already received logs, the stream closed normally (processing done)
+        // Use functional state read via setTimeout to get latest logs value
+        setTimeout(() => {
+          setLogs((currentLogs) => {
+            if (currentLogs.length > 0) {
+              // Stream closed after getting logs — treat as complete
+              setIsComplete(true);
+              setProgress((p) => Math.max(p, 100));
+              if (onComplete) onComplete();
+            } else {
+              setError('Waiting for processing to start...');
+            }
+            return currentLogs; // return unchanged
+          });
+        }, 2000);
+        return;
       }
       
       // Only show error if we haven't received any logs yet
-      // (connection might be establishing)
       if (logs.length === 0) {
-        // Wait a bit before showing error (stream might be initializing)
         setTimeout(() => {
           if (logs.length === 0 && eventSource.readyState !== EventSource.OPEN) {
             setError('Waiting for processing to start...');
-            // Don't close, let it retry
           }
         }, 2000);
-      } else if (eventSource.readyState === EventSource.CLOSED) {
-        // Connection closed after receiving logs
-        setError('Connection closed. Processing may still be running in background.');
       }
-      
-      // Don't close immediately, let browser retry
     };
 
     // Cleanup

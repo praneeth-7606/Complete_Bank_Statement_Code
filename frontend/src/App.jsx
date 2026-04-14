@@ -16,6 +16,7 @@ import Analytics from './pages/Analytics'
 import Corrections from './pages/Corrections'
 import Statements from './pages/Statements'
 import StatementDetails from './pages/StatementDetails'
+import InvestmentChat from './pages/InvestmentChat'
 
 // Replace with your actual Google Client ID
 // Leave empty to disable Google OAuth (email/password will still work)
@@ -26,7 +27,7 @@ function App() {
     <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
       <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
         <AuthProvider>
-          <Toaster 
+          <Toaster
             position="top-right"
             toastOptions={{
               duration: 4000,
@@ -54,7 +55,7 @@ function App() {
             {/* Public Routes */}
             <Route path="/login" element={<Login />} />
             <Route path="/signup" element={<Signup />} />
-            
+
             {/* Protected Routes - Using NEW ModernLayout */}
             <Route path="/" element={
               <ProtectedRoute>
@@ -99,6 +100,11 @@ function App() {
             <Route path="/statement/:uploadId" element={
               <ProtectedRoute>
                 <ModernLayout><StatementDetails /></ModernLayout>
+              </ProtectedRoute>
+            } />
+            <Route path="/investment" element={
+              <ProtectedRoute>
+                <ModernLayout><InvestmentChat /></ModernLayout>
               </ProtectedRoute>
             } />
           </Routes>

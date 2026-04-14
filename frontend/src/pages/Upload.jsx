@@ -29,7 +29,7 @@ const Upload = () => {
       toast.info('Notifications are managed by your browser settings')
       return
     }
-    
+
     const granted = await notificationManager.requestPermission()
     if (granted) {
       setNotificationsEnabled(true)
@@ -43,13 +43,13 @@ const Upload = () => {
   const handleFileChange = (e) => {
     const selectedFiles = Array.from(e.target.files)
     const pdfFiles = selectedFiles.filter(file => file.type === 'application/pdf')
-    
+
     if (pdfFiles.length !== selectedFiles.length) {
       toast.error('Only PDF files are allowed')
     }
-    
+
     setFiles(prev => [...prev, ...pdfFiles])
-    
+
     // Initialize passwords for new files
     const newPasswords = { ...passwords }
     pdfFiles.forEach(file => {
@@ -74,16 +74,16 @@ const Upload = () => {
     e.preventDefault()
     e.stopPropagation()
     setDragActive(false)
-    
+
     const droppedFiles = Array.from(e.dataTransfer.files)
     const pdfFiles = droppedFiles.filter(file => file.type === 'application/pdf')
-    
+
     if (pdfFiles.length !== droppedFiles.length) {
       toast.error('Only PDF files are allowed')
     }
-    
+
     setFiles(prev => [...prev, ...pdfFiles])
-    
+
     // Initialize passwords for new files
     const newPasswords = { ...passwords }
     pdfFiles.forEach(file => {
@@ -110,7 +110,7 @@ const Upload = () => {
 
   const handleSubmit = async (e) => {
     e.preventDefault()
-    
+
     if (files.length === 0) {
       toast.error('Please select at least one PDF file')
       return
@@ -133,47 +133,55 @@ const Upload = () => {
         const generatedUploadId = crypto.randomUUID ? crypto.randomUUID() : `upload-${Date.now()}`
         setUploadId(generatedUploadId)
         setShowLogs(true)
-        
+
         // Show notification that processing started
         if (notificationsEnabled) {
           notificationManager.statementProcessing(files[0].name)
         }
-        
+
         // Send the upload_id to backend so logs stream to the correct ID
         response = await statementAPI.processSingleStatement(
-          files[0], 
+          files[0],
           passwords[files[0].name],
           generatedUploadId
         )
-        
+
         // Show success notification
-        if (notificationsEnabled && response.status === 'success') {
+        if (notificationsEnabled && response.success) {
           notificationManager.statementComplete(
-            files[0].name, 
-            response.total_transactions || 0
+            files[0].name,
+            response.transactions?.length || 0
           )
         }
+
+        // HTTP response arrived with transactions — results are ready.
+        // Ensure LogViewer closes and results display even if SSE never fires 'complete'.
+        setTimeout(() => {
+          setProcessing(false)
+          setShowLogs(false)
+        }, 1200)
+
       } else {
         // Multiple files upload - Generate upload ID for log streaming
         const generatedUploadId = crypto.randomUUID ? crypto.randomUUID() : `upload-${Date.now()}`
         setUploadId(generatedUploadId)
         setShowLogs(true)  // Show logs for multi-statement too!
-        
+
         toast.loading(`Processing ${files.length} statements...`, { id: 'multi-upload', duration: Infinity })
-        
+
         if (notificationsEnabled) {
           notificationManager.info(
             '📄 Processing Statements',
             `Processing ${files.length} statements...`
           )
         }
-        
+
         const passwordArray = files.map(file => passwords[file.name])
         response = await statementAPI.processMultipleStatements(files, passwordArray, generatedUploadId)
-        
+
         toast.dismiss('multi-upload')
         toast.success(`✅ Successfully processed ${files.length} statements!`)
-        
+
         // Show success notification
         if (notificationsEnabled && response.status === 'success') {
           notificationManager.success(
@@ -184,7 +192,7 @@ const Upload = () => {
       }
 
       setResults(response)
-      
+
       // Extract transactions from response
       let allTransactions = []
       if (files.length === 1) {
@@ -194,29 +202,30 @@ const Upload = () => {
         // Multiple files response - backend returns "transactions" not "all_transactions"
         allTransactions = response.transactions || []
       }
-      
+
       // Calculate stats
       const totalIncome = allTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
       const totalExpenses = allTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
       const balance = totalIncome - totalExpenses
-      
+
       // Fetch fresh data from backend to ensure persistence
       try {
-        const statements = await statementsAPI.getAllStatements()
+        const response = await statementsAPI.getAllStatements()
+        const statements = response.statements || []
         let backendTransactions = []
-        
+
         for (const statement of statements) {
           const details = await statementsAPI.getStatementDetails(statement.upload_id)
           if (details.transactions) {
             backendTransactions = [...backendTransactions, ...details.transactions]
           }
         }
-        
+
         // Calculate stats from backend data
         const backendIncome = backendTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
         const backendExpenses = backendTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
         const backendBalance = backendIncome - backendExpenses
-        
+
         // Save backend data to localStorage as cache
         const dashboardData = {
           stats: {
@@ -244,7 +253,7 @@ const Upload = () => {
           }))
         }
         localStorage.setItem('dashboardData', JSON.stringify(dashboardData))
-        
+
         console.log('✅ Saved backend data to localStorage:', {
           totalTransactions: backendTransactions.length,
           sampleTransaction: backendTransactions[0]
@@ -279,7 +288,7 @@ const Upload = () => {
         }
         localStorage.setItem('dashboardData', JSON.stringify(dashboardData))
       }
-      
+
       // Start polling for background task completion
       if (response.background_tasks_running && response.statement_details) {
         const uploadIds = response.statement_details.map(s => s.upload_id).filter(Boolean)
@@ -287,7 +296,7 @@ const Upload = () => {
           pollBackgroundTasks(uploadIds)
         }
       }
-      
+
       if (!showLogs) {
         toast.success(`Successfully processed ${allTransactions.length} transactions!`)
         if (response.background_tasks_running) {
@@ -339,9 +348,9 @@ const Upload = () => {
         const statusChecks = await Promise.all(
           uploadIds.map(id => statementsAPI.getBackgroundStatus(id))
         )
-        
+
         const allCompleted = statusChecks.every(status => status.all_tasks_completed)
-        
+
         if (allCompleted) {
           // All background tasks completed!
           toast.success('🎉 All background tasks completed! Your data is fully processed and ready for analysis.', {
@@ -351,7 +360,7 @@ const Upload = () => {
               color: '#fff',
             },
           })
-          
+
           // Show browser notification if enabled
           if (notificationsEnabled) {
             notificationManager.success(
@@ -359,25 +368,25 @@ const Upload = () => {
               'All background tasks finished. Your statements are ready for Q&A!'
             )
           }
-          
+
           return true // Stop polling
         }
-        
+
         return false // Continue polling
       } catch (error) {
         console.error('Error checking background status:', error)
         return true // Stop polling on error
       }
     }
-    
+
     // Poll every 3 seconds for up to 2 minutes
     let attempts = 0
     const maxAttempts = 40 // 40 * 3s = 2 minutes
-    
+
     const pollInterval = setInterval(async () => {
       attempts++
       const shouldStop = await checkStatus()
-      
+
       if (shouldStop || attempts >= maxAttempts) {
         clearInterval(pollInterval)
         if (attempts >= maxAttempts) {
@@ -415,11 +424,10 @@ const Upload = () => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={toggleNotifications}
-                className={`hidden md:flex items-center gap-2 px-6 py-3 rounded-xl font-semibold border transition-all ${
-                  notificationsEnabled
+                className={`hidden md:flex items-center gap-2 px-6 py-3 rounded-xl font-semibold border transition-all ${notificationsEnabled
                     ? 'bg-green-500/20 border-green-400 text-green-100 hover:bg-green-500/30'
                     : 'bg-white/20 border-white/30 text-white hover:bg-white/30'
-                }`}
+                  }`}
               >
                 {notificationsEnabled ? (
                   <>
@@ -437,7 +445,7 @@ const Upload = () => {
           </motion.div>
 
           {/* Upload Form */}
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             className="space-y-6"
@@ -450,11 +458,10 @@ const Upload = () => {
                 onDragOver={handleDrag}
                 onDrop={handleDrop}
                 whileHover={{ scale: 1.01 }}
-                className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all ${
-                  dragActive
+                className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all ${dragActive
                     ? 'border-indigo-500 bg-indigo-50/50 shadow-xl'
                     : 'border-indigo-300 bg-white/50 hover:border-indigo-400 hover:bg-indigo-50/30'
-                }`}
+                  }`}
               >
                 <div className="absolute inset-0 bg-gradient-to-br from-indigo-500/5 to-purple-500/5"></div>
                 <div className="relative p-12 text-center">
@@ -513,7 +520,7 @@ const Upload = () => {
                         {(files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(2)} MB total
                       </span>
                     </div>
-                    
+
                     <div className="space-y-3">
                       {files.map((file, index) => (
                         <motion.div

@@ -12,17 +12,17 @@ const CategoryBreakdown = ({ data = [], title = "Spending by Category" }) => {
   const defaultData = [
     { name: 'Food & Dining', value: 12500, color: '#f97316' },
     { name: 'Shopping', value: 8900, color: '#a855f7' },
-    { name: 'Transport', value: 5600, color: '#3b82f6' },
+    { name: 'Transportation', value: 5600, color: '#3b82f6' },
     { name: 'Bills & Utilities', value: 7800, color: '#eab308' },
     { name: 'Entertainment', value: 4200, color: '#ec4899' },
-    { name: 'Others', value: 3000, color: '#6b7280' }
+    { name: 'Other', value: 3000, color: '#6b7280' }
   ];
-  
+
   const chartData = data.length > 0 ? data : defaultData;
-  
+
   // Calculate total
   const total = chartData.reduce((sum, item) => sum + item.value, 0);
-  
+
   // Custom tooltip
   const CustomTooltip = ({ active, payload }) => {
     if (active && payload && payload.length) {
@@ -38,16 +38,16 @@ const CategoryBreakdown = ({ data = [], title = "Spending by Category" }) => {
     }
     return null;
   };
-  
+
   // Custom label
   const renderCustomLabel = ({ cx, cy, midAngle, innerRadius, outerRadius, percent }) => {
     const RADIAN = Math.PI / 180;
     const radius = innerRadius + (outerRadius - innerRadius) * 0.5;
     const x = cx + radius * Math.cos(-midAngle * RADIAN);
     const y = cy + radius * Math.sin(-midAngle * RADIAN);
-    
+
     if (percent < 0.05) return null; // Don't show label for small slices
-    
+
     return (
       <text
         x={x}
@@ -61,12 +61,12 @@ const CategoryBreakdown = ({ data = [], title = "Spending by Category" }) => {
       </text>
     );
   };
-  
+
   return (
     <Card className="p-6">
       <motion.div variants={chartVariants} initial="hidden" animate="visible">
         <h3 className="text-lg font-semibold text-gray-900 mb-6">{title}</h3>
-        
+
         <ResponsiveContainer width="100%" height={300}>
           <PieChart>
             <Pie
@@ -88,15 +88,15 @@ const CategoryBreakdown = ({ data = [], title = "Spending by Category" }) => {
             <Tooltip content={<CustomTooltip />} />
           </PieChart>
         </ResponsiveContainer>
-        
+
         {/* Legend */}
         <div className="grid grid-cols-2 gap-3 mt-6">
           {chartData.map((item, index) => {
             const percentage = ((item.value / total) * 100).toFixed(1);
             return (
               <div key={index} className="flex items-center gap-2">
-                <div 
-                  className="w-3 h-3 rounded-full flex-shrink-0" 
+                <div
+                  className="w-3 h-3 rounded-full flex-shrink-0"
                   style={{ backgroundColor: item.color }}
                 />
                 <div className="flex-1 min-w-0">

@@ -57,7 +57,8 @@ class LogStreamer:
         
         try:
             await self.queues[upload_id].put(log_entry)
-            logger.debug(f"[{upload_id}] {level.upper()}: {message}")
+            # LOG TO TERMINAL as INFO so the user can see progress in the terminal
+            logger.info(f"   [LOG] [{upload_id}] {message}")
         except asyncio.QueueFull:
             logger.warning(f"Queue full for upload_id: {upload_id}")
     

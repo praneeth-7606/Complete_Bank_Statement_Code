@@ -20,7 +20,7 @@ export const COLORS = {
     800: '#1e40af',
     900: '#1e3a8a',
   },
-  
+
   // Success Colors
   success: {
     50: '#f0fdf4',
@@ -34,7 +34,7 @@ export const COLORS = {
     800: '#166534',
     900: '#14532d',
   },
-  
+
   // Danger Colors
   danger: {
     50: '#fef2f2',
@@ -48,7 +48,7 @@ export const COLORS = {
     800: '#991b1b',
     900: '#7f1d1d',
   },
-  
+
   // Warning Colors
   warning: {
     50: '#fffbeb',
@@ -62,7 +62,7 @@ export const COLORS = {
     800: '#92400e',
     900: '#78350f',
   },
-  
+
   // Info Colors
   info: {
     50: '#f0f9ff',
@@ -76,7 +76,7 @@ export const COLORS = {
     800: '#075985',
     900: '#0c4a6e',
   },
-  
+
   // Neutral Colors
   gray: {
     50: '#f9fafb',
@@ -161,7 +161,7 @@ export const ANIMATIONS = {
     normal: 300,
     slow: 500,
   },
-  
+
   // Easing
   easing: {
     easeIn: 'cubic-bezier(0.4, 0, 1, 1)',
@@ -169,44 +169,44 @@ export const ANIMATIONS = {
     easeInOut: 'cubic-bezier(0.4, 0, 0.2, 1)',
     spring: 'cubic-bezier(0.68, -0.55, 0.265, 1.55)',
   },
-  
+
   // Framer Motion variants
   fadeIn: {
     initial: { opacity: 0 },
     animate: { opacity: 1 },
     exit: { opacity: 0 },
   },
-  
+
   slideUp: {
     initial: { opacity: 0, y: 20 },
     animate: { opacity: 1, y: 0 },
     exit: { opacity: 0, y: -20 },
   },
-  
+
   slideDown: {
     initial: { opacity: 0, y: -20 },
     animate: { opacity: 1, y: 0 },
     exit: { opacity: 0, y: 20 },
   },
-  
+
   slideLeft: {
     initial: { opacity: 0, x: 20 },
     animate: { opacity: 1, x: 0 },
     exit: { opacity: 0, x: -20 },
   },
-  
+
   slideRight: {
     initial: { opacity: 0, x: -20 },
     animate: { opacity: 1, x: 0 },
     exit: { opacity: 0, x: 20 },
   },
-  
+
   scale: {
     initial: { opacity: 0, scale: 0.9 },
     animate: { opacity: 1, scale: 1 },
     exit: { opacity: 0, scale: 0.9 },
   },
-  
+
   stagger: {
     hidden: { opacity: 0 },
     visible: {
@@ -231,9 +231,12 @@ export const TRANSACTION_CATEGORIES = {
   HEALTHCARE: { label: 'Healthcare', color: COLORS.success[500], icon: '🏥' },
   EDUCATION: { label: 'Education', color: COLORS.primary[600], icon: '📚' },
   TRAVEL: { label: 'Travel', color: COLORS.info[600], icon: '✈️' },
-  INVESTMENT: { label: 'Investment', color: COLORS.success[600], icon: '📈' },
+  INVESTMENT: { label: 'Investment', color: COLORS.primary[700], icon: '📈' },
+  DIVIDEND: { label: 'Dividend', color: COLORS.success[500], icon: '💎' },
   SALARY: { label: 'Salary', color: COLORS.success[700], icon: '💰' },
   TRANSFER: { label: 'Transfer', color: COLORS.gray[600], icon: '↔️' },
+  PERSONAL_TRANSFER: { label: 'Personal Transfer', color: COLORS.primary[400], icon: '👤' },
+  OTHER_TRANSFER: { label: 'Other Transfers', color: COLORS.info[400], icon: '👥' },
   OTHER: { label: 'Other', color: COLORS.gray[400], icon: '📌' },
 };
 

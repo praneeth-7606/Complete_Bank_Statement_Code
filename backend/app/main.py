@@ -1,135 +1,40 @@
 
 from contextlib import asynccontextmanager
-import io
-import pypdf
 import uuid
 import json
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any
 import datetime
-import re
 import asyncio
 import logging
 from . import models, agents
 from .models import MultiStatementResponse, StatementFile
 from .database import init_db
-from .rag_pipeline import RAGPipeline
+from .agentic_rag import AgenticRAGPipeline
 from .auth_router import router as auth_router
 from . import auth_utils
-from .optimized_processor import OptimizedTransactionProcessor
-# from .table_extractor import extractor as table_extractor  # Not needed with Donut VLM
-from .accurate_processor import AccurateTransactionProcessor
 from .smart_extractor import get_smart_extractor
 from .log_streamer import log_streamer
+from .logging_config import setup_logging
 from .data_encryptor import DataEncryptor, EncryptionError
 from .config import settings
+from .investment.router import router as investment_router
+
+# Initialize Logging for Terminal Visibility
+setup_logging()
 
 logger = logging.getLogger(__name__)
 
 # Initialize SMART EXTRACTOR - Auto-classifies PDFs and uses best method
 smart_extractor = None  # Will be initialized on first use
 
-# Initialize ACCURATE processor - 100% debit/credit accuracy + Rate limit friendly
-accurate_processor = AccurateTransactionProcessor(
-    category_batch_size=50,  # Very large batches = fewer API calls
-    max_concurrent_workers=2  # Reduced to avoid rate limits
-)
+# Global in-memory session history (simple version)
+# In production, this would be in Redis or MongoDB
+SESSION_HISTORY: Dict[str, List[Dict[str, str]]] = {}
 
-# Keep old processor as fallback (if table extraction fails)
-optimized_processor = OptimizedTransactionProcessor(
-    mini_batch_size=15,  # Larger batches = fewer API calls
-    max_concurrent_workers=3  # Reduced to avoid rate limits
-)
-
-def extract_bank_name(filename: str) -> str:
-    """Extract bank name from filename or return 'Unknown Bank'"""
-    filename_lower = filename.lower()
-    
-    # Common bank name patterns
-    bank_patterns = {
-        'hdfc': 'HDFC Bank',
-        'icici': 'ICICI Bank',
-        'sbi': 'State Bank of India',
-        'axis': 'Axis Bank',
-        'kotak': 'Kotak Mahindra Bank',
-        'pnb': 'Punjab National Bank',
-        'bob': 'Bank of Baroda',
-        'canara': 'Canara Bank',
-        'union': 'Union Bank',
-        'idbi': 'IDBI Bank',
-        'yes': 'Yes Bank',
-        'indusind': 'IndusInd Bank',
-        'dlb': 'Dhanlaxmi Bank',
-        'federal': 'Federal Bank',
-        'rbl': 'RBL Bank',
-        'idfc': 'IDFC First Bank'
-    }
-    
-    for pattern, bank_name in bank_patterns.items():
-        if pattern in filename_lower:
-            return bank_name
-    
-    return 'Unknown Bank'
-
-def get_pdf_page_count(pdf_bytes: bytes) -> int:
-    """Get number of pages in PDF"""
-    try:
-        pdf_reader = pypdf.PdfReader(io.BytesIO(pdf_bytes))
-        return len(pdf_reader.pages)
-    except:
-        return 0
-
-async def extract_text_from_pdf(password: str, file_content: bytes) -> str:
-    """Extracts all text content from an uploaded PDF file."""
-    try:
-        pdf_bytes = io.BytesIO(file_content)
-        pdf_reader = pypdf.PdfReader(pdf_bytes)
-        if pdf_reader.is_encrypted:
-            if pdf_reader.decrypt(password) == pypdf.PasswordType.NOT_DECRYPTED:
-                raise HTTPException(status_code=400, detail="Incorrect PDF password.")
-        extracted_text = "".join(page.extract_text() for page in pdf_reader.pages)
-        if not extracted_text or not extracted_text.strip():
-            raise HTTPException(status_code=422, detail="Could not extract text from PDF. The document might be empty or image-based.")
-        return extracted_text
-    except pypdf.errors.PdfReadError:
-        raise HTTPException(status_code=400, detail="Invalid or corrupted PDF file.")
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"PDF processing error: {e}")
-
-def pre_parse_transaction_lines(text: str) -> List[str]:
-    """
-    This new parser is designed specifically for statements where a single transaction
-    is split across multiple lines. It intelligently reconstructs them.
-    """
-    reconstructed_lines = []
-    current_line_parts = []
-    date_pattern = re.compile(r"^\d{2}/\d{2}/\d{4}")
-    money_pattern = re.compile(r"\d{1,3}(?:,?\d{3})*\.\d{2}")
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or "Cheque/Ref No" in line or "Total" in line or "B/F" in line:
-            continue
-
-        if date_pattern.match(line):
-            if current_line_parts:
-                full_line = " ".join(current_line_parts)
-                if money_pattern.search(full_line):
-                    reconstructed_lines.append(full_line)
-            current_line_parts = [line]
-        elif current_line_parts:
-            current_line_parts.append(line)
-
-    if current_line_parts:
-        full_line = " ".join(current_line_parts)
-        if money_pattern.search(full_line):
-            reconstructed_lines.append(full_line)
-
-    logger.info(f"Intelligent parser reconstructed {len(reconstructed_lines)} complete transaction lines.")
-    return reconstructed_lines
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -161,10 +66,11 @@ app.add_middleware(
     expose_headers=["*"]
 )
 
-rag_pipeline = RAGPipeline()
+rag_pipeline = AgenticRAGPipeline()
 
-# Include authentication router
+# Include routers
 app.include_router(auth_router)
+app.include_router(investment_router)
 
 # Test endpoint to verify CORS
 @app.get("/test-cors")
@@ -223,124 +129,6 @@ async def stream_logs(upload_id: str):
 # BACKGROUND TASK FUNCTIONS
 # ============================================
 
-async def save_to_database_background(
-    upload_id: str,
-    filename: str,
-    file_size_bytes: int,
-    bank_name: str,
-    extraction_method: str,
-    page_count: int,
-    transactions: List[models.Transaction],
-    processing_time: float = 0,
-    insights: List[str] = None,
-    user_id: str = None  # Add user_id parameter
-):
-    """Background task to save transactions to MongoDB"""
-    try:
-        logger.info(f"[{upload_id}] Starting database save (background)...")
-        
-        # Create upload record with the upload_id as a custom field
-        upload = models.Upload(
-            filename=filename,
-            file_size_bytes=file_size_bytes,
-            bank_name=bank_name,
-            extraction_method=extraction_method,
-            page_count=page_count,
-            total_transactions=len(transactions),
-            processing_time_seconds=processing_time,
-            status="completed",
-            processed_at=datetime.datetime.utcnow(),
-            insights=insights or [],
-            db_save_completed=False,
-            vector_index_completed=False,
-            user_id=user_id  # Add user_id
-        )
-        await upload.save()
-        
-        # Store the database ID for later reference
-        db_upload_id = str(upload.id)
-        
-        # Update upload_id in transactions to use the database ID
-        for txn in transactions:
-            txn.upload_id = db_upload_id
-        
-        # Save all transactions
-        await models.Transaction.insert_many(transactions)
-        
-        # Mark DB save as completed
-        upload.db_save_completed = True
-        await upload.save()
-        
-        logger.info(f"[{upload_id}] ✅ Database save complete: {len(transactions)} transactions, DB ID: {db_upload_id}")
-        
-        await log_streamer.add_log(
-            upload_id,
-            f"✅ Database save completed! Saved {len(transactions)} transactions to MongoDB.",
-            "success",
-            None
-        )
-        
-        # Return the database ID for vector indexing
-        return db_upload_id
-        
-    except Exception as e:
-        logger.error(f"[{upload_id}] ❌ Database save failed: {e}", exc_info=True)
-        await log_streamer.add_log(
-            upload_id,
-            f"⚠️  Database save failed: {str(e)}",
-            "warning",
-            None
-        )
-
-
-async def index_vectors_background(
-    upload_id: str,
-    transactions: List[models.Transaction],
-    db_upload_id: str = None
-):
-    """Background task to create vector embeddings"""
-    try:
-        logger.info(f"[{upload_id}] Starting vector indexing (background)...")
-        
-        await rag_pipeline.index_transactions(transactions)
-        
-        # Mark vector indexing as completed using the database ID
-        if db_upload_id:
-            try:
-                from bson import ObjectId
-                upload = await models.Upload.get(ObjectId(db_upload_id))
-                if upload:
-                    upload.vector_index_completed = True
-                    await upload.save()
-                    logger.info(f"[{upload_id}] Marked vector indexing complete for DB ID: {db_upload_id}")
-            except Exception as e:
-                logger.error(f"[{upload_id}] Failed to update vector status: {e}")
-        
-        logger.info(f"[{upload_id}] ✅ Vector indexing complete")
-        
-        await log_streamer.add_log(
-            upload_id,
-            f"✅ Vector indexing completed! Created search vectors for {len(transactions)} transactions. You can now ask questions about your finances!",
-            "success",
-            None
-        )
-        
-        # Send final completion notification
-        await log_streamer.add_log(
-            upload_id,
-            "🎉 All background tasks completed! Your statement is fully processed and ready for Q&A.",
-            "complete",
-            None
-        )
-        
-    except Exception as e:
-        logger.error(f"[{upload_id}] ❌ Vector indexing failed: {e}", exc_info=True)
-        await log_streamer.add_log(
-            upload_id,
-            f"⚠️  Vector indexing failed: {str(e)}",
-            "warning",
-            None
-        )
 
 # ============================================
 # SHARED HELPER FUNCTION FOR PROCESSING
@@ -349,239 +137,55 @@ async def index_vectors_background(
 async def process_single_statement_core(
     pdf_file: UploadFile,
     password: str,
-    structuring_agent: agents.CategorizationAgent,
-    categorization_agent: agents.CategorizationAgent,
     corrections_list: List[Dict],
-    user_id: str = None  # Add user_id parameter
+    user_id: str = None,
+    user_name: str = "User",
+    streaming_id: str = None
 ) -> Dict[str, Any]:
     """
-    Core logic for processing a single statement with 100% accuracy.
-    Uses table extraction for precise debit/credit identification.
-    Returns transactions in the SAME format as single-statement endpoint.
+    Core logic for processing a single statement using the optimized SmartExtractor.
     """
     try:
-        # PDF processing - SMART AI EXTRACTION (Column + Balance Detection)
         pdf_content = await pdf_file.read()
         
-        logger.info(f"🤖 Extracting transactions using SMART AI...")
-        import time
-        start_time = time.time()
-        
-        # Initialize SMART extractor if needed
+        # Initialize SMART extractor
         global smart_extractor
         if smart_extractor is None:
             smart_extractor = get_smart_extractor()
         
-        # STEP 1: Try SMART extraction (auto-classifies PDF and uses best method)
-        try:
-            logger.info(f"   🧠 SMART Strategy: Auto-Classify PDF → Use Best Method → 100% Accuracy")
-            transactions_from_ai = smart_extractor.extract_from_pdf(pdf_content, password, pdf_file.filename)
-            
-            if not transactions_from_ai or len(transactions_from_ai) == 0:
-                raise ValueError("No transactions extracted by AI")
-            
-            logger.info(f"✅ Extracted {len(transactions_from_ai)} transactions with SMART AI")
-            logger.info(f"   ✅ Debit/Credit: Auto-corrected using balance tracking")
-            
-        except Exception as ai_error:
-            # Fallback to old text-based method
-            logger.warning(f"AI extraction failed: {ai_error}")
-            logger.info(f"⚠️  Falling back to text-based extraction...")
-            
-            extracted_text = await extract_text_from_pdf(password, pdf_content)
-            transaction_lines = pre_parse_transaction_lines(extracted_text)
-            
-            if not transaction_lines:
-                return {
-                    "success": False,
-                    "filename": pdf_file.filename,
-                    "upload_id": "",
-                    "transactions": [],
-                    "transactions_to_index": [],
-                    "error": "No transaction lines could be extracted"
-                }
-            
-            # Create upload record for fallback path
-            upload = models.Upload(
-                filename=pdf_file.filename,
-                user_id=user_id
-            )
-            await upload.save()
-            upload_id_str = str(upload.id)
-            
-            # Use old processor as fallback
-            logger.info(f"Using legacy AI-powered parsing for {len(transaction_lines)} lines...")
-            processing_result = await optimized_processor.process_transactions(
-                transaction_lines,
-                corrections_list
-            )
-            
-            if not processing_result["success"]:
-                return {
-                    "success": False,
-                    "filename": pdf_file.filename,
-                    "upload_id": upload_id_str,
-                    "transactions": [],
-                    "transactions_to_index": [],
-                    "error": processing_result["error"]
-                }
-            
-            categorized_transactions = processing_result["transactions"]
-            elapsed = time.time() - start_time
-            
-            perf_report = optimized_processor.get_performance_report()
-            logger.info(f"⚡ Legacy processing complete: {len(categorized_transactions)} transactions in {elapsed:.2f}s")
-            logger.info(f"📊 Stage breakdown: Structuring={perf_report['stage_breakdown']['structuring']['time_seconds']:.1f}s, "
-                       f"Categorization={perf_report['stage_breakdown']['categorization']['time_seconds']:.1f}s, "
-                       f"Embedding={perf_report['stage_breakdown']['embedding']['time_seconds']:.1f}s")
-        else:
-            # AI EXTRACTION SUCCEEDED
-            # Create upload record with metadata
-            upload = models.Upload(
-                filename=pdf_file.filename,
-                file_size_bytes=len(pdf_content),
-                status="processing",
-                user_id=user_id
-            )
-            await upload.save()
-            upload_id_str = str(upload.id)
-            
-            elapsed = time.time() - start_time
-            
-            # Determine extraction method used
-            extraction_method = "SMART_AUTO"
-            if transactions_from_ai and len(transactions_from_ai) > 0:
-                if 'extraction_method' in transactions_from_ai[0]:
-                    extraction_method = transactions_from_ai[0]['extraction_method']
-            
-            logger.info(f"✨ Smart AI extraction complete!")
-            logger.info(f"📊 EXTRACTION METHOD USED: {extraction_method}")
-            logger.info(f"⚡ Extraction complete: {len(transactions_from_ai)} transactions in {elapsed:.2f}s "
-                       f"({len(transactions_from_ai)/elapsed:.1f} txn/sec)")
-            
-            # FIX 1: ADD CATEGORIZATION STEP
-            logger.info(f"🏷️  Categorizing {len(transactions_from_ai)} transactions...")
-            categorization_start = time.time()
-            
-            # Categorize transactions using AI
-            categorized_transactions = await categorization_agent.categorize_transactions(
-                transactions_from_ai,
-                corrections_list
-            )
-            
-            categorization_time = time.time() - categorization_start
-            logger.info(f"✅ Categorization complete in {categorization_time:.2f}s")
-            
-            # Update total processing time
-            elapsed = time.time() - start_time
+        # Invoke optimized Hot-Path extraction
+        result = await smart_extractor.process_statement(
+            pdf_content, 
+            password, 
+            pdf_file.filename,
+            user_id=user_id,
+            user_name=user_name,
+            corrections=corrections_list,
+            streaming_id=streaming_id
+        )
         
-        # Process and validate transactions
-        transactions_to_save = []
-        transaction_snapshots = []
-        
-        for t_raw in categorized_transactions:
-            try:
-                # Normalize keys to lowercase for robust access
-                t = {k.lower(): v for k, v in t_raw.items()}
-                
-                # --- FIX: Ensure Credit/Debit are correctly parsed and Amount is derived ---
-                credit_val = float(t.get('credit', 0.0) or 0.0)
-                debit_val = float(t.get('debit', 0.0) or 0.0)
-                # amount_abs is set to the non-zero value between credit and debit
-                amount_abs = credit_val if credit_val > 0 else debit_val
-                
-                date_str = t["date"]
-                try:
-                    # Attempt to parse date strings robustly
-                    if "/" in date_str:
-                        # Handles formats like DD/MM/YYYY
-                        date_obj = datetime.datetime.strptime(date_str, "%d/%m/%Y").date()
-                    else: 
-                        # Handles ISO format YYYY-MM-DD
-                        date_obj = datetime.datetime.fromisoformat(date_str).date()
-                except (ValueError, TypeError):
-                    logger.warning(f"Could not parse date string: {date_str}. Skipping transaction.")
-                    continue
-                
-                # Create snapshot for the report (output) - CONSISTENT FORMAT
-                snap = {
-                    'date': date_obj.isoformat(), 
-                    'description': t['description'], 
-                    'amount': amount_abs, # This is the correctly derived non-zero amount
-                    'category': t.get('category', 'Uncategorized'), 
-                    'credit': credit_val, 
-                    'debit': debit_val, 
-                    'upload_id': upload_id_str
-                }
-                
-                # Create document data for database save
-                db_transaction_data = {
-                    'date': date_obj, 
-                    'description': t['description'],
-                    'amount': amount_abs, 
-                    'category': t.get('category', 'Uncategorized'),
-                    'upload_id': upload_id_str,
-                    'credit': credit_val,
-                    'debit': debit_val,
-                }
-                
-                transactions_to_save.append(models.Transaction(**db_transaction_data))
-                transaction_snapshots.append(snap)
-                
-            except (ValueError, TypeError, KeyError) as e:
-                logger.warning(f"Skipping transaction due to validation error: {e}. Original Data: {t_raw}")
-                continue
-        
-        if not transactions_to_save:
-            return {
+        if not result.get("transactions"):
+             return {
                 "success": False,
                 "filename": pdf_file.filename,
-                "upload_id": upload_id_str,
-                "transactions": [],
-                "transactions_to_index": [],
-                "error": "No valid transactions after validation"
+                "error": result.get("errors", ["No transactions extracted"])[0]
             }
-        
-        # Save to database
-        await models.Transaction.insert_many(transactions_to_save)
-        logger.info(f"Successfully added {len(transactions_to_save)} transactions to the database.")
-        
-        # FIX 4: Update upload metadata with comprehensive information
-        upload_doc = await models.Upload.get(upload_id_str)
-        if upload_doc:
-            # Extract bank name from filename or PDF content
-            bank_name = extract_bank_name(pdf_file.filename)
-            
-            # Get page count
-            page_count = get_pdf_page_count(pdf_content)
-            
-            # Update metadata
-            upload_doc.bank_name = bank_name
-            upload_doc.extraction_method = extraction_method
-            upload_doc.processing_time_seconds = elapsed
-            upload_doc.total_transactions = len(transactions_to_save)
-            upload_doc.page_count = page_count
-            upload_doc.status = "completed"
-            upload_doc.processed_at = datetime.datetime.utcnow()
-            
-            # ✅ FIX: Mark background tasks as completed
-            upload_doc.db_save_completed = True
-            upload_doc.vector_index_completed = True
-            
-            await upload_doc.save()
-            logger.info(f"✅ Updated upload metadata: {bank_name}, {len(transactions_to_save)} transactions, {elapsed:.2f}s")
-        
+
         return {
             "success": True,
             "filename": pdf_file.filename,
-            "upload_id": upload_id_str,
-            "transactions": transaction_snapshots,
-            "transactions_to_index": transactions_to_save,
-            "extraction_method": extraction_method,
-            "bank_name": bank_name,
-            "processing_time": elapsed,
-            "page_count": page_count,
-            "error": None
+            "upload_id": streaming_id,
+            "transactions": result["transactions"],
+            "insights": result["insights"],
+            "processing_time": result.get("processing_time", 0)
+        }
+        
+    except Exception as e:
+        logger.error(f"Error processing {pdf_file.filename}: {str(e)}")
+        return {
+            "success": False,
+            "filename": pdf_file.filename,
+            "error": str(e)
         }
         
     except HTTPException as he:
@@ -629,26 +233,25 @@ async def process_multiple_statements(
     password_list = [p.strip() for p in passwords.split(',')]
     statement_count = len(statement_pdfs)
     
-    # Generate upload_id if not provided (for log streaming)
-    if not upload_id:
-        upload_id = str(uuid.uuid4())
+    # Generate streaming_id if not provided (for log streaming)
+    streaming_id = upload_id or str(uuid.uuid4())
     
     # Create log stream for real-time updates
-    log_streamer.create_stream(upload_id)
+    log_streamer.create_stream(streaming_id)
     
     await log_streamer.add_log(
-        upload_id,
-        f"🚀 Starting multi-statement processing ({statement_count} files)...",
+        streaming_id,
+        f"[START] Starting multi-statement processing ({statement_count} files)...",
         "info",
         0
     )
     
     logger.info(f"=" * 80)
-    logger.info(f"🚀 MULTI-STATEMENT PROCESSING STARTED")
+    logger.info(f"[START] MULTI-STATEMENT PROCESSING STARTED")
     logger.info(f"=" * 80)
-    logger.info(f"📄 Number of PDFs received: {statement_count}")
-    logger.info(f"🔑 Number of passwords received: {len(password_list)}")
-    logger.info(f"📋 Filenames: {[pdf.filename for pdf in statement_pdfs]}")
+    logger.info(f" Number of PDFs received: {statement_count}")
+    logger.info(f" Number of passwords received: {len(password_list)}")
+    logger.info(f" Filenames: {[pdf.filename for pdf in statement_pdfs]}")
     logger.info(f"=" * 80)
     
     # Validation
@@ -663,200 +266,65 @@ async def process_multiple_statements(
     corrections = await models.Correction.find_all().to_list()
     corrections_list = [c.dict() for c in corrections]
     
-    # Create shared agent instances
-    structuring_agent = agents.TransactionStructuringAgent()
-    categorization_agent = agents.CategorizationAgent()
-    
     # Log each file being processed
     for i, pdf in enumerate(statement_pdfs):
         await log_streamer.add_log(
-            upload_id,
-            f"📄 Processing {pdf.filename}...",
+            streaming_id,
+            f" Processing {pdf.filename}...",
             "info",
             10 + (i * 10)
         )
     
-    # Process all statements in parallel
     tasks = [
         process_single_statement_core(
             pdf_file,
             password,
-            structuring_agent,
-            categorization_agent,
             corrections_list,
-            current_user.user_id  # Pass user_id
+            user_id=str(current_user.user_id),
+            user_name=current_user.full_name,
+            streaming_id=f"{streaming_id}_{i}" # Sub-ID for background logs
         )
-        for pdf_file, password in zip(statement_pdfs, password_list)
+        for i, (pdf_file, password) in enumerate(zip(statement_pdfs, password_list))
     ]
     
-    await log_streamer.add_log(
-        upload_id,
-        "⚡ Processing all statements in parallel...",
-        "info",
-        40
-    )
+    await log_streamer.add_log(streaming_id, "[FAST] Processing all statements in parallel...", "info", 40)
     
     results = await asyncio.gather(*tasks, return_exceptions=True)
     
-    await log_streamer.add_log(
-        upload_id,
-        "✅ All statements processed!",
-        "success",
-        60
-    )
-    
-    logger.info(f"=" * 80)
-    logger.info(f"✅ PARALLEL PROCESSING COMPLETED")
-    logger.info(f"📊 Results received: {len(results)}")
-    logger.info(f"=" * 80)
-    
-    # Collect results with CONSISTENT transaction format
+    # Collect results
     all_transactions = []
-    all_transactions_to_index = []
     statement_results = []
     processed_count = 0
     failed_count = 0
     
     for result in results:
-        if isinstance(result, Exception):
-            logger.error(f"Exception in parallel processing: {result}")
-            statement_results.append(models.StatementFile(
-                filename="unknown",
-                upload_id="",
-                transaction_count=0,
-                transactions=[],
-                status=f"failed - {str(result)}"
-            ))
+        if isinstance(result, Exception) or not result.get("success"):
             failed_count += 1
+            error_msg = str(result) if isinstance(result, Exception) else result.get("error", "Unknown")
+            statement_results.append({
+                "filename": result.get("filename", "unknown") if isinstance(result, dict) else "unknown",
+                "status": "failed",
+                "error": error_msg
+            })
             continue
         
-        if result["success"]:
-            processed_count += 1
-            # Transactions are already in the correct format from core function
-            all_transactions.extend(result["transactions"])
-            all_transactions_to_index.extend(result["transactions_to_index"])
-            
-            logger.info(f"✅ Statement {processed_count}: {result['filename']} - {len(result['transactions'])} transactions")
-            
-            await log_streamer.add_log(
-                upload_id,
-                f"✅ Statement {processed_count}: {result['filename']} - {len(result['transactions'])} transactions",
-                "success",
-                60 + (processed_count * 5)
-            )
-            
-            statement_results.append(models.StatementFile(
-                filename=result["filename"],
-                upload_id=result["upload_id"],
-                transaction_count=len(result["transactions"]),
-                transactions=result["transactions"],  # Already has date, description, amount, category, credit, debit, upload_id
-                status="success"
-            ))
-        else:
-            failed_count += 1
-            logger.error(f"❌ Statement failed: {result['filename']} - Error: {result.get('error', 'Unknown')}")
-            statement_results.append(models.StatementFile(
-                filename=result["filename"],
-                upload_id=result["upload_id"],
-                transaction_count=0,
-                transactions=[],
-                status=f"failed - {result['error']}"
-            ))
-    
-    # ============================================
-    # RETURN RESPONSE IMMEDIATELY (Don't wait for DB/Analysis)
-    # ============================================
-    logger.info(f"✅ Processing complete! Returning {len(all_transactions)} transactions to user")
-    logger.info(f"💾 Starting background tasks (DB save, analysis, vector indexing)...")
-    
-    await log_streamer.add_log(
-        upload_id,
-        f"✅ Processing complete! Returning {len(all_transactions)} transactions",
-        "success",
-        90
-    )
-    
-    await log_streamer.add_log(
-        upload_id,
-        "💾 Saving to database and generating analysis (background)...",
-        "info",
-        95
-    )
-    
-    # Prepare response message
-    if processed_count == statement_count:
-        message = f"All {statement_count} statements processed successfully!"
-    elif processed_count > 0:
-        message = f"Processed {processed_count}/{statement_count} statements. {failed_count} failed."
-    else:
-        message = f"Failed to process all {statement_count} statements."
-    
-    # Get upload IDs for background processing
-    all_upload_ids = [result["upload_id"] for result in results if isinstance(result, dict) and result.get("success")]
-    
-    # ============================================
-    # START BACKGROUND TASKS (User doesn't wait for these)
-    # ============================================
-    async def background_tasks():
-        """
-        Background tasks that run after response is sent:
-        1. Save Upload records to database
-        2. Generate financial analysis
-        3. Index to Pinecone vector DB
-        4. Update upload status
-        """
-        try:
-            logger.info(f"🔄 Background: Starting tasks for {len(all_upload_ids)} uploads")
-            
-            # Task 1: Generate financial analysis
-            if all_transactions:
-                logger.info(f"📊 Background: Generating analysis for {len(all_transactions)} transactions")
-                analyst_agent = agents.FinancialAnalystAgent()
-                financial_analysis = await analyst_agent.generate_financial_insights(all_transactions)
-                logger.info(f"✅ Background: Analysis complete")
-                
-                # Store analysis in upload records
-                if isinstance(financial_analysis, dict):
-                    insights = financial_analysis.get('insights', [])
-                    for upload_id in all_upload_ids:
-                        try:
-                            upload_doc = await models.Upload.get(upload_id)
-                            if upload_doc:
-                                upload_doc.insights = insights
-                                await upload_doc.save()
-                        except Exception as e:
-                            logger.error(f"Failed to save insights for {upload_id}: {e}")
-            
-            # Task 2: Index to Pinecone
-            if all_transactions_to_index:
-                logger.info(f"🔍 Background: Indexing {len(all_transactions_to_index)} transactions to Pinecone")
-                await rag_pipeline.index_transactions(all_transactions_to_index)
-                logger.info(f"✅ Background: Vector indexing complete")
-            
-            # Task 3: Mark all uploads as fully completed
-            for upload_id in all_upload_ids:
-                try:
-                    upload_doc = await models.Upload.get(upload_id)
-                    if upload_doc:
-                        upload_doc.vector_index_completed = True
-                        await upload_doc.save()
-                        logger.info(f"✅ Background: Upload {upload_id} fully completed")
-                except Exception as e:
-                    logger.error(f"Failed to update upload {upload_id}: {e}")
-            
-            logger.info(f"🎉 Background: All tasks completed successfully!")
-            
-        except Exception as e:
-            logger.error(f"❌ Background tasks failed: {e}", exc_info=True)
-    
-    # Start background tasks (don't wait for them)
-    asyncio.create_task(background_tasks())
+        processed_count += 1
+        all_transactions.extend(result["transactions"])
+        statement_results.append({
+            "filename": result["filename"],
+            "upload_id": result["upload_id"],
+            "transaction_count": len(result["transactions"]),
+            "transactions": result["transactions"],
+            "insights": result["insights"],
+            "status": "success"
+        })
     
     # ============================================
     # RETURN RESPONSE IMMEDIATELY
     # ============================================
-    logger.info(f"✅ Multi-statement processing completed: {message}")
-    logger.info(f"⚡ Returning response immediately. Background tasks running...")
+    logger.info(f"[FAST] Returning response immediately. Background tasks running...")
+    
+    summary_msg = f"Processed {processed_count} successfully, {failed_count} failed."
     
     # Return comprehensive JSON response with transactions (from memory, not DB)
     return {
@@ -865,15 +333,15 @@ async def process_multiple_statements(
         "processed_successfully": processed_count,
         "failed_statements": failed_count,
         "total_transactions": len(all_transactions),
-        "message": message,
-        "transactions": all_transactions,  # Transactions from processing (not DB)
-        "background_tasks_running": True,  # Indicate background tasks are running
+        "message": summary_msg,
+        "transactions": all_transactions,
+        "background_tasks_running": True,
         "statement_details": [
             {
-                "filename": stmt.filename,
-                "upload_id": stmt.upload_id,
-                "transaction_count": stmt.transaction_count,
-                "status": stmt.status
+                "filename": stmt["filename"],
+                "upload_id": stmt.get("upload_id", ""),
+                "transaction_count": stmt.get("transaction_count", 0),
+                "status": stmt["status"]
             }
             for stmt in statement_results
         ]
@@ -909,7 +377,7 @@ async def process_statement(
     7. Background: Database Storage (encrypted) + Vector Indexing
     """
     logger.info("Starting /process-statement endpoint with improved workflow.")
-    logger.info("🔒 SECURITY: Password will be used only for PDF decryption")
+    logger.info("SECURITY: Password will be used only for PDF decryption")
     
     # Security audit logging
     try:
@@ -918,452 +386,88 @@ async def process_statement(
     except ImportError:
         pass  # Logging config not available
     
-    # Use provided upload_id or generate new one
-    if not upload_id:
-        upload_id = str(uuid.uuid4())
+    # Use provided upload_id or generate new one for LOG STREAMING
+    streaming_id = upload_id or str(uuid.uuid4())
+    log_streamer.create_stream(streaming_id)
+    await log_streamer.add_log(streaming_id, "Starting statement processing...", "info", 0)
     
-    # Create log stream IMMEDIATELY (before any processing)
-    log_streamer.create_stream(upload_id)
-    
-    # Send initial log to confirm connection
-    await log_streamer.add_log(upload_id, "🚀 Starting statement processing...", "info", 0)
-    
-    # Track processing time
     start_time = time.time()
+    user_id_str = str(current_user.user_id) if hasattr(current_user, 'user_id') else str(current_user.id)
     
     try:
-        
         # ============================================
-        # STEP 1: PDF EXTRACTION
+        # UNIFIED HOT-PATH: Extraction -> Categorization -> Insights
         # ============================================
-        await log_streamer.add_log(upload_id, "📄 Starting PDF extraction...", "info", 10)
-        
-        pdf_content = await statement_pdf.read()
-        file_size_bytes = len(pdf_content)
-        
-        await log_streamer.add_log(
-            upload_id, 
-            f"✅ PDF loaded ({file_size_bytes / 1024 / 1024:.2f} MB)", 
-            "success", 
-            15
+        # We leverage the same core logic used for multi-statement processing.
+        # This function returns in ~35s and starts background persistence.
+        result = await process_single_statement_core(
+            statement_pdf,
+            password,
+            [], # corrections handled inside core if needed
+            user_id=user_id_str,
+            user_name=current_user.full_name,
+            streaming_id=streaming_id
         )
         
-        # ============================================
-        # STEP 2: SMART AI EXTRACTION
-        # ============================================
-        await log_streamer.add_log(upload_id, "🤖 Extracting transactions with Smart AI...", "info", 20)
-        
-        # Initialize smart extractor if needed
-        global smart_extractor
-        if smart_extractor is None:
-            smart_extractor = get_smart_extractor()
-        
-        try:
-            transactions_from_ai = smart_extractor.extract_from_pdf(
-                pdf_content, 
-                password, 
-                statement_pdf.filename
-            )
-            
-            if not transactions_from_ai or len(transactions_from_ai) == 0:
-                raise ValueError("No transactions extracted by AI")
-            
-            extraction_method = transactions_from_ai[0].get('extraction_method', 'SMART_AUTO')
-            
-            await log_streamer.add_log(
-                upload_id,
-                f"✅ Extracted {len(transactions_from_ai)} transactions using {extraction_method}",
-                "success",
-                40
-            )
-            
-        except Exception as ai_error:
-            await log_streamer.add_log(
-                upload_id,
-                f"⚠️  AI extraction failed: {str(ai_error)}. Falling back to text-based extraction...",
-                "warning",
-                25
-            )
-            
-            # Fallback to text-based extraction
-            extracted_text = await extract_text_from_pdf(password, pdf_content)
-            transaction_lines = pre_parse_transaction_lines(extracted_text)
-            
-            if not transaction_lines:
-                await log_streamer.add_log(
-                    upload_id,
-                    "❌ No transaction lines could be extracted",
-                    "error",
-                    0
-                )
-                return {
-                    "status": "failed",
-                    "upload_id": upload_id,
-                    "message": "No transaction lines could be extracted",
-                    "transactions": [],
-                    "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
-                }
-            
-            # Use legacy processor
-            await log_streamer.add_log(
-                upload_id,
-                f"🔄 Processing {len(transaction_lines)} lines with legacy parser...",
-                "info",
-                30
-            )
-            
-            processing_result = await optimized_processor.process_transactions(
-                transaction_lines,
-                []  # corrections will be loaded later
-            )
-            
-            if not processing_result["success"]:
-                await log_streamer.add_log(
-                    upload_id,
-                    f"❌ Processing failed: {processing_result['error']}",
-                    "error",
-                    0
-                )
-                return {
-                    "status": "failed",
-                    "upload_id": upload_id,
-                    "message": processing_result["error"],
-                    "transactions": [],
-                    "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
-                }
-            
-            transactions_from_ai = processing_result["transactions"]
-            extraction_method = "TEXT_BASED"
-            
-            await log_streamer.add_log(
-                upload_id,
-                f"✅ Extracted {len(transactions_from_ai)} transactions",
-                "success",
-                40
-            )
-        
-        # ============================================
-        # STEP 4: CATEGORIZATION
-        # ============================================
-        await log_streamer.add_log(
-            upload_id,
-            f"🏷️  Categorizing {len(transactions_from_ai)} transactions...",
-            "info",
-            50
-        )
-        
-        # Pre-fetch corrections
-        corrections = await models.Correction.find_all().to_list()
-        corrections_list = [c.dict() for c in corrections]
-        
-        # Debug: Log sample transaction before categorization
-        logger.info(f"📝 Sample transaction BEFORE categorization: {transactions_from_ai[0] if transactions_from_ai else 'None'}")
-        
-        categorization_agent = agents.CategorizationAgent()
-        categorized_transactions = await categorization_agent.categorize_transactions(
-            transactions_from_ai,
-            corrections_list
-        )
-        
-        # Debug: Log sample transaction after categorization
-        logger.info(f"📝 Sample transaction AFTER categorization: {categorized_transactions[0] if categorized_transactions else 'None'}")
-        
-        # Count categories
-        category_counts = {}
-        for txn in categorized_transactions:
-            cat = txn.get('category', 'Uncategorized')
-            category_counts[cat] = category_counts.get(cat, 0) + 1
-        
-        logger.info(f"📊 Category distribution: {category_counts}")
-        
-        top_category = max(category_counts.items(), key=lambda x: x[1]) if category_counts else ("None", 0)
-        
-        await log_streamer.add_log(
-            upload_id,
-            f"✅ Categorization complete! Top category: {top_category[0]} ({top_category[1]} transactions)",
-            "success",
-            60
-        )
-        
-        # ============================================
-        # STEP 5: PREPARE TRANSACTIONS (NO ANALYSIS YET)
-        # ============================================
-        await log_streamer.add_log(
-            upload_id,
-            "📝 Preparing transactions for database...",
-            "info",
-            70
-        )
-        
-        # Initialize encryptor for database encryption
-        encryptor = None
-        if settings.ENCRYPTION_KEY:
-            try:
-                encryptor = DataEncryptor(settings.ENCRYPTION_KEY, settings.ENCRYPTION_SALT)
-                logger.info("🔐 Encryption enabled for database storage")
-            except EncryptionError as e:
-                logger.warning(f"⚠️  Encryption initialization failed: {e}. Proceeding without encryption.")
-        else:
-            logger.warning("⚠️  ENCRYPTION_KEY not set. Data will be stored unencrypted.")
-        
-        # Process and validate transactions
-        transactions_to_save = []
-        transaction_snapshots = []
-        
-        for t_raw in categorized_transactions:
-            try:
-                t = {k.lower(): v for k, v in t_raw.items()}
-                
-                credit_val = float(t.get('credit', 0.0) or 0.0)
-                debit_val = float(t.get('debit', 0.0) or 0.0)
-                amount_abs = credit_val if credit_val > 0 else debit_val
-                
-                date_str = t["date"]
-                try:
-                    if "/" in date_str:
-                        date_obj = datetime.datetime.strptime(date_str, "%d/%m/%Y").date()
-                    else:
-                        date_obj = datetime.datetime.fromisoformat(date_str).date()
-                except (ValueError, TypeError):
-                    logger.warning(f"Could not parse date string: {date_str}")
-                    continue
-                
-                snap = {
-                    'date': date_obj.isoformat(),
-                    'description': t['description'],
-                    'amount': amount_abs,
-                    'category': t.get('category', 'Uncategorized'),
-                    'credit': credit_val,
-                    'debit': debit_val,
-                    'upload_id': upload_id
-                }
-                
-                db_transaction_data = {
-                    'date': date_obj,
-                    'description': t['description'],
-                    'amount': amount_abs,
-                    'category': t.get('category', 'Uncategorized'),
-                    'upload_id': upload_id,
-                    'user_id': current_user.user_id,  # Add user_id
-                    'credit': credit_val,
-                    'debit': debit_val,
-                }
-                
-                # SECURITY: Encrypt sensitive fields before database storage
-                if encryptor:
-                    try:
-                        db_transaction_data['description_encrypted'] = encryptor.encrypt(t['description'])
-                        if t.get('reference'):
-                            db_transaction_data['reference_encrypted'] = encryptor.encrypt(t['reference'])
-                        logger.debug(f"🔐 Encrypted transaction data for database")
-                    except EncryptionError as e:
-                        logger.warning(f"⚠️  Encryption failed for transaction: {e}")
-                
-                transactions_to_save.append(models.Transaction(**db_transaction_data))
-                transaction_snapshots.append(snap)
-                
-            except (ValueError, TypeError, KeyError) as e:
-                logger.warning(f"Skipping transaction due to validation error: {e}")
-                continue
-        
-        if not transactions_to_save:
-            await log_streamer.add_log(
-                upload_id,
-                "❌ No valid transactions after validation",
-                "error",
-                0
-            )
+        if not result.get("success"):
+            await log_streamer.add_log(streaming_id, f"[FAIL] Processing failed: {result.get('error')}", "error", 100)
             return {
                 "status": "failed",
-                "upload_id": upload_id,
-                "message": "No valid transactions after validation",
+                "upload_id": streaming_id,
+                "message": result.get("error"),
                 "transactions": [],
                 "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
             }
-        
-        # Security audit logging for encryption
-        if encryptor:
-            try:
-                from .logging_config import log_encryption_operation
-                log_encryption_operation(len(transactions_to_save), "process_statement")
-            except ImportError:
-                pass  # Logging config not available
-        
-        # Extract bank name and metadata
-        bank_name = extract_bank_name(statement_pdf.filename)
-        page_count = get_pdf_page_count(pdf_content)
-        
-        await log_streamer.add_log(
-            upload_id,
-            f"✅ Transactions ready! Bank: {bank_name}, {len(transactions_to_save)} transactions",
-            "success",
-            80
-        )
-        
-        # ============================================
-        # STEP 6: RETURN RESPONSE IMMEDIATELY (NO ANALYSIS YET)
-        # ============================================
-        await log_streamer.add_log(
-            upload_id,
-            "✅ Processing complete! Returning transactions...",
-            "success",
-            90
-        )
-        
-        # ============================================
-        # STEP 7: BACKGROUND TASKS (DB + ANALYSIS + VECTORS)
-        # ============================================
-        # Start background tasks: DB save, AI analysis, vector indexing
-        async def run_background_tasks():
-            # 1. Save to database first
-            db_upload_id = await save_to_database_background(
-                upload_id,
-                statement_pdf.filename,
-                file_size_bytes,
-                bank_name,
-                extraction_method,
-                page_count,
-                transactions_to_save,
-                processing_time,
-                [],  # No insights yet
-                current_user.user_id
-            )
-            
-            # 2. Generate AI analysis in background
-            await log_streamer.add_log(
-                upload_id,
-                "📊 Generating financial analysis...",
-                "info",
-                None
-            )
-            
-            try:
-                analyst_agent = agents.FinancialAnalystAgent()
-                financial_analysis = await analyst_agent.generate_financial_insights(transaction_snapshots)
-                
-                # Save insights to database
-                if isinstance(financial_analysis, dict):
-                    insights = financial_analysis.get('insights', [])
-                    if db_upload_id and insights:
-                        upload_doc = await models.Upload.get(db_upload_id)
-                        if upload_doc:
-                            upload_doc.insights = insights
-                            await upload_doc.save()
-                
-                await log_streamer.add_log(
-                    upload_id,
-                    "✅ Financial analysis complete!",
-                    "success",
-                    None
-                )
-            except Exception as e:
-                logger.error(f"Analysis failed: {e}")
-                await log_streamer.add_log(
-                    upload_id,
-                    f"⚠️  Analysis failed: {str(e)}",
-                    "warning",
-                    None
-                )
-            
-            # 3. Run vector indexing
-            await index_vectors_background(
-                upload_id,
-                transactions_to_save,
-                db_upload_id
-            )
-        
-        asyncio.create_task(run_background_tasks())
-        
-        await log_streamer.add_log(
-            upload_id,
-            "💾 Saving to database (background)...",
-            "info",
-            95
-        )
-        
-        await log_streamer.add_log(
-            upload_id,
-            "🔍 Creating search vectors (background)...",
-            "info",
-            98
-        )
-        
-        await log_streamer.add_log(
-            upload_id,
-            "✅ All done! You can now view your transactions.",
-            "complete",
-            100
-        )
-        
+
         # Calculate processing time
         processing_time = time.time() - start_time
         
-        # Return response immediately (analysis will be generated in background)
+        await log_streamer.add_log(
+            streaming_id,
+            f"[OK] Success! {len(result['transactions'])} transactions processed in {processing_time:.1f}s",
+            "success",
+            100
+        )
+
         return {
             "status": "success",
-            "upload_id": upload_id,
-            "total_transactions": len(transaction_snapshots),
-            "message": f"Successfully processed {len(transaction_snapshots)} transactions. Analysis generating in background.",
-            "transactions": transaction_snapshots,
-            "analysis": {
-                "summary": {},
-                "category_wise_split": {},
-                "insights": ["Analysis is being generated in the background. Refresh to see insights."]
-            },
+            "upload_id": streaming_id,
+            "total_transactions": len(result["transactions"]),
+            "message": f"Successfully processed {len(result['transactions'])} transactions.",
+            "transactions": result["transactions"],
+            "analysis": result["insights"],
             "metadata": {
-                "bank_name": bank_name,
-                "extraction_method": extraction_method,
-                "page_count": page_count,
-                "file_size_bytes": file_size_bytes,
-                "total_transactions": len(transactions_to_save),
                 "processing_time_seconds": round(processing_time, 2),
-                "analysis_status": "generating"
+                "analysis_status": "complete"
             }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error in /process-statement/: {str(e)}", exc_info=True)
+        await log_streamer.add_log(streaming_id, f"[FAIL] System Error: {str(e)}", "error", 0)
+        return {
+            "status": "failed",
+            "upload_id": streaming_id,
+            "message": str(e),
+            "transactions": [],
+            "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
         
     except Exception as e:
         logger.error(f"Error processing {statement_pdf.filename}: {str(e)}", exc_info=True)
         await log_streamer.add_log(
-            upload_id,
-            f"❌ Error: {str(e)}",
+            streaming_id,
+            f"[FAIL] Error: {str(e)}",
             "error",
             0
         )
         return {
             "status": "failed",
-            "upload_id": upload_id,
+            "upload_id": streaming_id,
             "message": str(e),
             "transactions": [],
             "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
-    
-    # FIX 4: Get upload metadata
-    upload_metadata = await models.Upload.get(upload_id_str)
-    
-    # Return JSON response with all database transactions and metadata
-    return {
-        "status": "success",
-        "upload_id": upload_id_str,
-        "filename": statement_pdf.filename,
-        "total_transactions": len(all_transactions_json),
-        "message": f"Successfully processed {len(all_transactions_json)} transactions",
-        "transactions": all_transactions_json,  # All transactions from database
-        "analysis": {
-            "summary": safe_analysis.summary,
-            "category_wise_split": safe_analysis.category_wise_split,
-            "insights": safe_analysis.insights
-        },
-        # FIX 4: Add comprehensive metadata
-        "metadata": {
-            "bank_name": upload_metadata.bank_name if upload_metadata else bank_name,
-            "extraction_method": upload_metadata.extraction_method if upload_metadata else extraction_method,
-            "processing_time_seconds": upload_metadata.processing_time_seconds if upload_metadata else processing_time,
-            "page_count": upload_metadata.page_count if upload_metadata else page_count,
-            "file_size_bytes": upload_metadata.file_size_bytes if upload_metadata else None,
-            "processed_at": upload_metadata.processed_at.isoformat() if upload_metadata and upload_metadata.processed_at else None,
-            "status": upload_metadata.status if upload_metadata else "completed"
-        }
-    }
 
 
 # ============================================
@@ -1377,81 +481,80 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
     Targets < 3 second response time.
     """
     import time
-    from .rag_response_formatter import rag_formatter
-    
     start_time = time.time()
     
+    # Enhanced logging for debugging
+    logger.info("="*80)
+    logger.info(f"📨 CHAT REQUEST from user: {current_user.email}")
+    logger.info(f"📝 Query: {query.query}")
+    logger.info(f"🔑 User ID: {current_user.user_id}")
+    
     try:
-        # Optimize: Limit to top 10 most relevant transactions for faster processing
-        skip = (query.page - 1) * min(query.page_size, 10)  # Cap at 10 per page
+        user_id = str(current_user.user_id)
         
-        # Use paginated query to handle large result sets
-        result = await rag_pipeline.query_with_pagination(
-            query.query, 
-            limit=min(query.page_size, 10),  # Limit to 10 for latency
-            skip=skip
+        # 1. Determine history (Favor frontend-passed history, fallback to server-side)
+        history = query.chat_history
+        if history is None:
+            history = SESSION_HISTORY.get(user_id, [])
+        
+        logger.info(f"📚 Chat history length: {len(history)} messages")
+
+        # 2. Run Pipeline
+        logger.info("🚀 Starting RAG pipeline...")
+        result = await rag_pipeline.run(
+            user_query=query.query,
+            user_id=user_id,
+            chat_history=history
         )
-        
-        if not result["documents"]:
-            return {
-                "status": "success",
-                "data": {
-                    "answer": "I couldn't find any relevant transactions to answer your question.",
-                    "type": "summary",
-                    "sections": [],
-                    "metrics": [],
-                    "insights": [],
-                    "processing_time_ms": int((time.time() - start_time) * 1000)
-                }
-            }
-        
-        # Generate answer with the retrieved documents
-        answer = await rag_pipeline.answer(query.query, result["documents"])
-        
-        if answer is None:
-            return {
-                "status": "success",
-                "data": {
-                    "answer": "Sorry, I was unable to generate a response.",
-                    "type": "summary",
-                    "sections": [],
-                    "metrics": [],
-                    "insights": [],
-                    "processing_time_ms": int((time.time() - start_time) * 1000)
-                }
-            }
-        
-        # Format response using RAG formatter
-        formatted_response = rag_formatter.format_response(answer)
-        
-        # Add pagination info
-        if result["has_more"]:
-            formatted_response['data']['pagination'] = {
-                'current_page': result['current_page'],
-                'total_count': result['total_count'],
-                'returned_count': result['returned_count'],
-                'has_more': True
-            }
-        else:
-            formatted_response['data']['pagination'] = {
-                'current_page': result['current_page'],
-                'total_count': result['total_count'],
-                'returned_count': result['returned_count'],
-                'has_more': False
-            }
-        
-        # Add processing time
+        logger.info("✅ RAG pipeline completed")
+
         processing_time = int((time.time() - start_time) * 1000)
-        formatted_response['data']['processing_time_ms'] = processing_time
         
-        # Log if response time exceeds target
-        if processing_time > 3000:
-            logger.warning(f"Chat response took {processing_time}ms (target: <3000ms)")
+        # New structured format
+        answer = result.get("answer", "I couldn't generate a response.")
+        metrics = result.get("metrics", [])
+        insights = result.get("insights", [])
+        transactions = result.get("transactions", [])
         
-        return formatted_response
+        logger.info(f"📊 Response stats:")
+        logger.info(f"   - Answer length: {len(answer)} chars")
+        logger.info(f"   - Metrics: {len(metrics)}")
+        logger.info(f"   - Insights: {len(insights)}")
+        logger.info(f"   - Transactions: {len(transactions)}")
+        logger.info(f"   - Processing time: {processing_time}ms")
+
+        # 3. Update server-side history (Store only text to minimize tokens)
+        new_history = history + [
+            {"role": "user", "content": query.query},
+            {"role": "assistant", "content": answer}
+        ]
+        SESSION_HISTORY[user_id] = new_history[-15:]
         
+        logger.info("✅ Chat request completed successfully")
+        logger.info("="*80)
+
+        return {
+            "status": "success",
+            "data": {
+                "answer": answer,
+                "metrics": metrics,
+                "insights": insights,
+                "transactions": transactions,
+                "plan": result.get("plan"),
+                "metrics_raw": result.get("metrics_raw"),
+                "processing_time_ms": processing_time
+            }
+        }
+
     except Exception as e:
-        logger.error(f"Error in chat endpoint: {e}", exc_info=True)
+        processing_time = int((time.time() - start_time) * 1000)
+        logger.error("="*80)
+        logger.error(f"❌ ERROR in chat endpoint after {processing_time}ms")
+        logger.error(f"Error type: {type(e).__name__}")
+        logger.error(f"Error message: {str(e)}")
+        logger.error("Full traceback:", exc_info=True)
+        logger.error("="*80)
+        
         return {
             "status": "error",
             "data": {
@@ -1460,22 +563,48 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
                 "sections": [],
                 "metrics": [],
                 "insights": [],
-                "processing_time_ms": int((time.time() - start_time) * 1000)
-            }
+                "processing_time_ms": processing_time,
+            },
         }
 
 @app.post("/correct-transaction/", response_model=models.Correction)
-async def correct_transaction_category(correction_data: models.CorrectionCreate):
-    keyword = correction_data.transaction_description_keyword.upper()
-    correction = await models.Correction.find_one(models.Correction.transaction_description_keyword == keyword)
+async def correct_transaction_category(
+    correction_data: models.CorrectionCreate,
+    current_user: models.User = Depends(auth_utils.get_current_user)
+):
+    from .agent_categorization import CategorizationAgent
+    
+    # Normalize the keyword to a "Merchant Identity" (e.g., extract the name from UPI string)
+    raw_keyword = correction_data.transaction_description_keyword
+    identity = CategorizationAgent._extract_merchant_identity(raw_keyword)
+    user_id = str(current_user.user_id)
+    
+    logger.info(f" CORRECTION: Normalizing '{raw_keyword[:30]}...' -> '{identity}'")
+    
+    # 1. Store Correction (Persistent Learning) - Use the IDENTITY as the primary key
+    correction = await models.Correction.find_one(
+        models.Correction.transaction_description_keyword == identity,
+        models.Correction.user_id == user_id
+    )
+    
     if correction:
         correction.correct_category = correction_data.correct_category
     else:
         correction = models.Correction(
-            transaction_description_keyword=keyword,
-            correct_category=correction_data.correct_category
+            transaction_description_keyword=identity,
+            correct_category=correction_data.correct_category,
+            user_id=user_id
         )
     await correction.save()
+    
+    # 2. Trigger Propagation Engine (Self-Learning)
+    # This updates all past similar transactions in MongoDB for this user
+    await CategorizationAgent.propagate_category(
+        user_id=user_id,
+        pattern=identity, # Use the clean identity for propagation
+        correct_category=correction_data.correct_category
+    )
+    
     return correction
 
 @app.get("/")
@@ -1551,7 +680,7 @@ async def get_statement_details(upload_id: str):
         if settings.ENCRYPTION_KEY:
             try:
                 encryptor = DataEncryptor(settings.ENCRYPTION_KEY, settings.ENCRYPTION_SALT)
-                logger.debug("🔓 Decryption enabled for transaction retrieval")
+                logger.debug("[UNLOCKED] Decryption enabled for transaction retrieval")
                 
                 # Security audit logging
                 try:
@@ -1560,7 +689,7 @@ async def get_statement_details(upload_id: str):
                 except ImportError:
                     pass  # Logging config not available
             except EncryptionError as e:
-                logger.warning(f"⚠️  Decryption initialization failed: {e}")
+                logger.warning(f"[WARN]  Decryption initialization failed: {e}")
         
         # Convert to JSON format and decrypt if needed
         transactions_json = []
@@ -1570,9 +699,9 @@ async def get_statement_details(upload_id: str):
             if encryptor and hasattr(txn, 'description_encrypted') and txn.description_encrypted:
                 try:
                     description = encryptor.decrypt(txn.description_encrypted)
-                    logger.debug(f"🔓 Decrypted transaction description")
+                    logger.debug(f"[UNLOCKED] Decrypted transaction description")
                 except EncryptionError as e:
-                    logger.warning(f"⚠️  Decryption failed: {e}")
+                    logger.warning(f"[WARN]  Decryption failed: {e}")
                     description = "[Decryption Failed]"
             
             transactions_json.append({
@@ -1640,7 +769,7 @@ async def get_background_status(upload_id: str):
 
 @app.get("/api/transactions/filtered")
 async def get_filtered_transactions(
-    category: str = None,
+    categories: List[str] = Query(None),
     type: str = None,
     search: str = None,
     page: int = 1,
@@ -1683,9 +812,16 @@ async def get_filtered_transactions(
         else:
             query["upload_id"] = {"$in": user_upload_ids}
         
-        # Filter by category
-        if category and category != "all":
-            query["category"] = category
+        # Filter by category (supports multiple)
+        if categories:
+            # Handle both single string and list of strings
+            if isinstance(categories, str):
+                values = [c.strip() for c in categories.split(",") if c.strip() and c.strip().lower() != 'all']
+            else:
+                values = [c for c in categories if c.lower() != 'all']
+            
+            if values:
+                query["category"] = {"$in": values}
         
         # Filter by transaction type
         if type and type != "all":
@@ -1782,6 +918,12 @@ async def get_dashboard_stats(
         largest_expense = max((float(t.debit) for t in transactions), default=0)
         largest_income = max((float(t.credit) for t in transactions), default=0)
         
+        # Get latest AI insights from the most recent upload
+        latest_upload = await models.Upload.find(
+            models.Upload.user_id == current_user.user_id
+        ).sort("-timestamp").first_or_none()
+        ai_insights = latest_upload.insights if latest_upload and latest_upload.insights else []
+        
         return {
             "status": "success",
             "data": {
@@ -1791,7 +933,8 @@ async def get_dashboard_stats(
                 "balance": round(balance, 2),
                 "average_transaction": round(average_transaction, 2),
                 "largest_expense": round(largest_expense, 2),
-                "largest_income": round(largest_income, 2)
+                "largest_income": round(largest_income, 2),
+                "ai_insights": ai_insights
             }
         }
         
@@ -2029,7 +1172,7 @@ async def update_transaction_category(
         transaction.category = new_category
         await transaction.save()
         
-        logger.info(f"✅ Updated transaction {transaction_id} category from {old_category} to {new_category}")
+        logger.info(f"[OK] Updated transaction {transaction_id} category from {old_category} to {new_category}")
         
         # Update vector embedding in Pinecone
         try:
@@ -2053,9 +1196,9 @@ async def update_transaction_category(
                 }
             )
             
-            logger.info(f"✅ Updated Pinecone vector for transaction {transaction_id}")
+            logger.info(f"[OK] Updated Pinecone vector for transaction {transaction_id}")
         except Exception as e:
-            logger.error(f"⚠️  Failed to update Pinecone vector: {e}")
+            logger.error(f"[WARN]  Failed to update Pinecone vector: {e}")
             # Continue even if Pinecone update fails
         
         # Return updated transaction
@@ -2110,9 +1253,9 @@ async def delete_statement(upload_id: str):
         # Step 3: Delete from Pinecone vector DB
         try:
             await rag_pipeline.delete_transactions_by_upload_id(upload_id)
-            logger.info(f"✅ Deleted vectors from Pinecone for upload_id: {upload_id}")
+            logger.info(f"[OK] Deleted vectors from Pinecone for upload_id: {upload_id}")
         except Exception as e:
-            logger.error(f"⚠️  Failed to delete from Pinecone: {e}")
+            logger.error(f"[WARN]  Failed to delete from Pinecone: {e}")
             # Continue with MongoDB deletion even if Pinecone fails
         
         # Step 4: Delete transactions from MongoDB
@@ -2120,11 +1263,11 @@ async def delete_statement(upload_id: str):
             models.Transaction.upload_id == upload_id
         ).delete()
         
-        logger.info(f"✅ Deleted {delete_result.deleted_count} transactions from MongoDB")
+        logger.info(f"[OK] Deleted {delete_result.deleted_count} transactions from MongoDB")
         
         # Step 5: Delete upload record from MongoDB
         await upload.delete()
-        logger.info(f"✅ Deleted upload record from MongoDB")
+        logger.info(f"[OK] Deleted upload record from MongoDB")
         
         return {
             "status": "success",

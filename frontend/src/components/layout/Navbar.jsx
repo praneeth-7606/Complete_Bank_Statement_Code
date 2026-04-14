@@ -1,18 +1,19 @@
 import { useState, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { motion } from 'framer-motion';
-import { 
-  Menu, 
-  X, 
-  LayoutDashboard, 
-  Upload, 
-  Receipt, 
-  BarChart3, 
-  MessageSquare, 
+import {
+  Menu,
+  X,
+  LayoutDashboard,
+  Upload,
+  Receipt,
+  BarChart3,
+  MessageSquare,
   FileText,
   User,
   LogOut,
-  Settings
+  Settings,
+  TrendingUp
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
 
@@ -27,17 +28,17 @@ const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  
+
   // Handle scroll effect
   useEffect(() => {
     const handleScroll = () => {
       setIsScrolled(window.scrollY > 20);
     };
-    
+
     window.addEventListener('scroll', handleScroll);
     return () => window.removeEventListener('scroll', handleScroll);
   }, []);
-  
+
   // Navigation links for authenticated users
   const navLinks = [
     { path: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -45,25 +46,25 @@ const Navbar = () => {
     { path: '/transactions', label: 'Transactions', icon: Receipt },
     { path: '/analytics', label: 'Analytics', icon: BarChart3 },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
+    { path: '/investment', label: 'Investments', icon: TrendingUp },
     { path: '/statements', label: 'Statements', icon: FileText }
   ];
-  
+
   // Check if link is active
   const isActive = (path) => location.pathname === path;
-  
+
   // Handle logout
   const handleLogout = () => {
     logout();
     navigate('/');
   };
-  
+
   return (
     <motion.nav
-      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${
-        isScrolled 
-          ? 'bg-white/90 backdrop-blur-lg shadow-lg' 
-          : 'bg-transparent'
-      }`}
+      className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled
+        ? 'bg-white/90 backdrop-blur-lg shadow-lg'
+        : 'bg-transparent'
+        }`}
       initial={{ y: -100 }}
       animate={{ y: 0 }}
       transition={{ duration: 0.3 }}
@@ -77,7 +78,7 @@ const Navbar = () => {
             </div>
             <span className="text-xl font-bold gradient-text">FinanceAI</span>
           </Link>
-          
+
           {/* Desktop Navigation */}
           {user && (
             <div className="hidden md:flex items-center space-x-1">
@@ -87,11 +88,10 @@ const Navbar = () => {
                   <Link
                     key={link.path}
                     to={link.path}
-                    className={`relative px-4 py-2 rounded-lg transition-colors ${
-                      isActive(link.path)
-                        ? 'text-indigo-600'
-                        : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
-                    }`}
+                    className={`relative px-4 py-2 rounded-lg transition-colors ${isActive(link.path)
+                      ? 'text-indigo-600'
+                      : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
+                      }`}
                   >
                     <div className="flex items-center space-x-2">
                       <Icon size={18} />
@@ -109,7 +109,7 @@ const Navbar = () => {
               })}
             </div>
           )}
-          
+
           {/* Right Side */}
           <div className="flex items-center space-x-4">
             {user ? (
@@ -127,7 +127,7 @@ const Navbar = () => {
                       {user.email?.split('@')[0]}
                     </span>
                   </button>
-                  
+
                   {/* Dropdown Menu */}
                   {isProfileOpen && (
                     <motion.div
@@ -156,7 +156,7 @@ const Navbar = () => {
                     </motion.div>
                   )}
                 </div>
-                
+
                 {/* Mobile Menu Button */}
                 <button
                   onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
@@ -184,7 +184,7 @@ const Navbar = () => {
           </div>
         </div>
       </div>
-      
+
       {/* Mobile Menu */}
       {user && isMobileMenuOpen && (
         <motion.div
@@ -201,11 +201,10 @@ const Navbar = () => {
                   key={link.path}
                   to={link.path}
                   onClick={() => setIsMobileMenuOpen(false)}
-                  className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${
-                    isActive(link.path)
-                      ? 'bg-indigo-50 text-indigo-600'
-                      : 'text-gray-700 hover:bg-gray-100'
-                  }`}
+                  className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${isActive(link.path)
+                    ? 'bg-indigo-50 text-indigo-600'
+                    : 'text-gray-700 hover:bg-gray-100'
+                    }`}
                 >
                   <Icon size={20} />
                   <span className="font-medium">{link.label}</span>

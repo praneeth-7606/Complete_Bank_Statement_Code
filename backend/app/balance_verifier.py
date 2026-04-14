@@ -35,7 +35,7 @@ class BalanceVerifier:
             For each transaction:
             1. Calculate expected balance change from VLM categorization
             2. Compare with actual balance change
-            3. If mismatch → Correct the categorization
+            3. If mismatch  Correct the categorization
             4. Track corrections for logging
         """
         if not transactions:
@@ -69,8 +69,8 @@ class BalanceVerifier:
             
             # Parse balance values
             try:
-                current_balance_float = float(str(current_balance).replace(',', '').replace('₹', '').strip())
-                prev_balance_float = float(str(prev_balance).replace(',', '').replace('₹', '').strip())
+                current_balance_float = float(str(current_balance).replace(',', '').replace('', '').strip())
+                prev_balance_float = float(str(prev_balance).replace(',', '').replace('', '').strip())
             except (ValueError, AttributeError):
                 # Can't parse balance, keep original
                 corrected_transactions.append(transaction)
@@ -110,15 +110,15 @@ class BalanceVerifier:
                 if vlm_type == 'debit' and correct_type == 'credit':
                     debit_to_credit_corrections += 1
                     logger.info(f"      Transaction #{idx + 1}: {transaction.get('date', 'N/A')}")
-                    logger.info(f"         VLM Says: Debit ₹{vlm_debit:.2f}")
-                    logger.info(f"         Balance: ₹{prev_balance_float:.2f} → ₹{current_balance_float:.2f} (increased ₹{change_amount:.2f})")
-                    logger.info(f"         ⚠️ MISMATCH: Corrected to Credit")
+                    logger.info(f"         VLM Says: Debit {vlm_debit:.2f}")
+                    logger.info(f"         Balance: {prev_balance_float:.2f}  {current_balance_float:.2f} (increased {change_amount:.2f})")
+                    logger.info(f"         [WARN] MISMATCH: Corrected to Credit")
                 elif vlm_type == 'credit' and correct_type == 'debit':
                     credit_to_debit_corrections += 1
                     logger.info(f"      Transaction #{idx + 1}: {transaction.get('date', 'N/A')}")
-                    logger.info(f"         VLM Says: Credit ₹{vlm_credit:.2f}")
-                    logger.info(f"         Balance: ₹{prev_balance_float:.2f} → ₹{current_balance_float:.2f} (decreased ₹{change_amount:.2f})")
-                    logger.info(f"         ⚠️ MISMATCH: Corrected to Debit")
+                    logger.info(f"         VLM Says: Credit {vlm_credit:.2f}")
+                    logger.info(f"         Balance: {prev_balance_float:.2f}  {current_balance_float:.2f} (decreased {change_amount:.2f})")
+                    logger.info(f"         [WARN] MISMATCH: Corrected to Debit")
             else:
                 # No correction needed
                 corrected_transactions.append(transaction)
@@ -127,12 +127,12 @@ class BalanceVerifier:
                 if idx < 5 and correct_type != 'unknown':
                     logger.info(f"      Transaction #{idx + 1}: {transaction.get('date', 'N/A')}")
                     if vlm_type == 'debit':
-                        logger.info(f"         VLM Says: Debit ₹{vlm_debit:.2f}")
-                        logger.info(f"         Balance: ₹{prev_balance_float:.2f} → ₹{current_balance_float:.2f} (decreased ₹{change_amount:.2f})")
+                        logger.info(f"         VLM Says: Debit {vlm_debit:.2f}")
+                        logger.info(f"         Balance: {prev_balance_float:.2f}  {current_balance_float:.2f} (decreased {change_amount:.2f})")
                     else:
-                        logger.info(f"         VLM Says: Credit ₹{vlm_credit:.2f}")
-                        logger.info(f"         Balance: ₹{prev_balance_float:.2f} → ₹{current_balance_float:.2f} (increased ₹{change_amount:.2f})")
-                    logger.info(f"         ✅ MATCH: Confirmed {correct_type.capitalize()}")
+                        logger.info(f"         VLM Says: Credit {vlm_credit:.2f}")
+                        logger.info(f"         Balance: {prev_balance_float:.2f}  {current_balance_float:.2f} (increased {change_amount:.2f})")
+                    logger.info(f"         [OK] MATCH: Confirmed {correct_type.capitalize()}")
             
             # Update previous balance for next iteration
             prev_balance = current_balance_float
@@ -161,16 +161,16 @@ class BalanceVerifier:
         
         Returns:
             Tuple of (change_amount, transaction_type)
-            - If balance decreased → ("debit", amount)
-            - If balance increased → ("credit", amount)
+            - If balance decreased  ("debit", amount)
+            - If balance increased  ("credit", amount)
         """
         balance_change = current_balance - prev_balance
         
         if balance_change < 0:
-            # Balance decreased → Debit transaction
+            # Balance decreased  Debit transaction
             return abs(balance_change), 'debit'
         elif balance_change > 0:
-            # Balance increased → Credit transaction
+            # Balance increased  Credit transaction
             return balance_change, 'credit'
         else:
             # No change

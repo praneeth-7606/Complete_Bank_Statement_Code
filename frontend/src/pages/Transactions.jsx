@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Download, Loader2 } from 'lucide-react'
+import { Download, Loader2, X } from 'lucide-react'
 import { motion } from 'framer-motion'
 import { Button } from '../components/common'
 import FilterBar from '../components/transactions/FilterBar'
@@ -12,11 +12,11 @@ import toast from 'react-hot-toast'
 const Transactions = () => {
   // Filter state
   const [filters, setFilters] = useState({
-    category: 'all',
+    categories: [],
     type: 'all',
     search: ''
   })
-  
+
   // Pagination state
   const [pagination, setPagination] = useState({
     page: 1,
@@ -24,7 +24,7 @@ const Transactions = () => {
     total: 0,
     totalPages: 0
   })
-  
+
   // Data state
   const [transactions, setTransactions] = useState([])
   const [loading, setLoading] = useState(true)
@@ -35,15 +35,16 @@ const Transactions = () => {
     try {
       setLoading(true)
       setError(null)
-      
+
       // Build query parameters
       const params = {
         page: pageNum,
         limit: pagination.limit
       }
-      
-      if (filters.category && filters.category !== 'all') {
-        params.category = filters.category
+
+      if (filters.categories && filters.categories.length > 0) {
+        // Send as a comma-separated string for simplicity with the modified backend
+        params.categories = filters.categories.join(',')
       }
       if (filters.type && filters.type !== 'all') {
         params.type = filters.type
@@ -51,10 +52,10 @@ const Transactions = () => {
       if (filters.search && filters.search.trim()) {
         params.search = filters.search.trim()
       }
-      
+
       // Fetch from backend using axios
       const response = await api.get('/api/transactions/filtered', { params })
-      
+
       if (response.data.status === 'success') {
         setTransactions(response.data.data.transactions)
         setPagination({
@@ -86,10 +87,10 @@ const Transactions = () => {
     fetchTransactions(1)
   }, [filters])
 
-  const handleFilterChange = ({ category, type }) => {
+  const handleFilterChange = ({ categories, type }) => {
     setFilters(prev => ({
       ...prev,
-      category: category === 'all' ? 'all' : category,
+      categories: categories || [],
       type: type === 'all' ? 'all' : type
     }))
   }
@@ -99,6 +100,28 @@ const Transactions = () => {
       ...prev,
       search: term
     }))
+  }
+
+  const removeCategory = (cat) => {
+    setFilters(prev => ({
+      ...prev,
+      categories: prev.categories.filter(c => c !== cat)
+    }))
+  }
+
+  const removeType = () => {
+    setFilters(prev => ({
+      ...prev,
+      type: 'all'
+    }))
+  }
+
+  const clearAllFilters = () => {
+    setFilters({
+      categories: [],
+      type: 'all',
+      search: ''
+    })
   }
 
   const handlePageChange = (page) => {
@@ -178,9 +201,75 @@ const Transactions = () => {
 
       {/* Filters */}
       <FilterBar
+        filters={filters}
         onFilterChange={handleFilterChange}
         onSearchChange={handleSearchChange}
       />
+
+      {/* Active Filter Chips */}
+      {(filters.categories.length > 0 || filters.type !== 'all' || filters.search) && (
+        <div className="flex flex-wrap items-center gap-2 py-2">
+          <span className="text-sm font-medium text-gray-500 mr-2">Active Filters:</span>
+
+          {filters.search && (
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="flex items-center gap-1 px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-full text-xs font-medium"
+            >
+              Search: "{filters.search}"
+              <button
+                onClick={() => handleSearchChange('')}
+                className="hover:text-indigo-900 ml-1"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          )}
+
+          {filters.type !== 'all' && (
+            <motion.div
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="flex items-center gap-1 px-3 py-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-full text-xs font-medium capitalize"
+            >
+              Type: {filters.type}
+              <button
+                onClick={removeType}
+                className="hover:text-purple-900 ml-1"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          )}
+
+          {filters.categories.map((cat) => (
+            <motion.div
+              key={cat}
+              initial={{ scale: 0.8, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              className="flex items-center gap-1 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-xs font-medium"
+            >
+              {cat}
+              <button
+                onClick={() => removeCategory(cat)}
+                className="hover:text-blue-900 ml-1"
+              >
+                <X size={14} />
+              </button>
+            </motion.div>
+          ))}
+
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearAllFilters}
+            className="text-xs text-gray-500 hover:text-indigo-600 ml-2"
+          >
+            Clear All
+          </Button>
+        </div>
+      )}
 
       {/* Transactions Table */}
       {transactions.length > 0 ? (

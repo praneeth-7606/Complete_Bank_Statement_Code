@@ -29,36 +29,43 @@ const Analytics = () => {
     try {
       setLoading(true)
       setError(null)
-      
+
       // Fetch category analytics
       const categoryResponse = await api.get('/api/analytics/by-category')
-      
+
       // Fetch dashboard stats for summary
       const statsResponse = await api.get('/api/dashboard/stats')
-      
+
       if (categoryResponse.data.status === 'success' && statsResponse.data.status === 'success') {
         // Generate insights
         const topCategory = categoryResponse.data.data.categories[0]
         const balance = statsResponse.data.data.balance
         const totalIncome = statsResponse.data.data.total_income
         const savingsPercentage = totalIncome > 0 ? ((balance / totalIncome) * 100).toFixed(1) : 0
-        
-        const insights = [
-          topCategory ? `Your highest spending category is ${topCategory.name} with ₹${topCategory.total.toLocaleString('en-IN')}` : 'No spending data available',
-          `Total savings this period: ₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${savingsPercentage}% of income)`,
-          `You have ${statsResponse.data.data.total_transactions} transactions`,
-          totalIncome > statsResponse.data.data.total_expenses ? '✅ Great! Your income exceeds expenses' : '⚠️ Your expenses exceed income - consider budgeting'
-        ]
-        
+
+        // Prioritize AI-generated insights from the Master Analyst agent if available
+        const aiInsights = statsResponse.data.data.ai_insights
+        const insights = (aiInsights && aiInsights.length > 0)
+          ? aiInsights
+          : [
+            topCategory ? `Your highest spending category is ${topCategory.name} with ₹${topCategory.total.toLocaleString('en-IN')}` : 'No spending data available',
+            `Total savings this period: ₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${savingsPercentage}% of income)`,
+            `You have ${statsResponse.data.data.total_transactions} transactions`,
+            totalIncome > statsResponse.data.data.total_expenses ? '✅ Great! Your income exceeds expenses' : '⚠️ Your expenses exceed income - consider budgeting'
+          ]
+
         setAnalyticsData(prev => ({
           ...prev,
-          categoryData: categoryResponse.data.data.categories,
+          categoryData: categoryResponse.data.data.categories.map(c => ({
+            ...c,
+            value: c.total // Map total to value for Recharts and table logic
+          })),
           insights,
           summary: {
             balance: statsResponse.data.data.balance,
             totalIncome: statsResponse.data.data.total_income,
-            totalExpenses: statsData.data.total_expenses,
-            totalTransactions: statsData.data.total_transactions
+            totalExpenses: statsResponse.data.data.total_expenses,
+            totalTransactions: statsResponse.data.data.total_transactions
           }
         }))
       } else {
@@ -78,7 +85,7 @@ const Analytics = () => {
       const dateResponse = await api.get('/api/analytics/by-date', {
         params: { period }
       })
-      
+
       if (dateResponse.data.status === 'success') {
         setAnalyticsData(prev => ({
           ...prev,
@@ -167,7 +174,7 @@ const Analytics = () => {
 
       {/* Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6">
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           className="card"
@@ -183,7 +190,7 @@ const Analytics = () => {
           </div>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.1 }}
@@ -200,7 +207,7 @@ const Analytics = () => {
           </div>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.2 }}
@@ -217,7 +224,7 @@ const Analytics = () => {
           </div>
         </motion.div>
 
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.3 }}
@@ -238,7 +245,7 @@ const Analytics = () => {
       {/* Charts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 sm:gap-6">
         {/* Category Breakdown */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.4 }}
@@ -273,7 +280,7 @@ const Analytics = () => {
         </motion.div>
 
         {/* Monthly Trend */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.5 }}
@@ -306,7 +313,7 @@ const Analytics = () => {
       </div>
 
       {/* Spending Trend Line Chart */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
@@ -327,7 +334,7 @@ const Analytics = () => {
       </motion.div>
 
       {/* AI Insights */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.7 }}
@@ -350,7 +357,7 @@ const Analytics = () => {
       </motion.div>
 
       {/* Category Details Table */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.8 }}
@@ -371,7 +378,7 @@ const Analytics = () => {
                 {analyticsData.categoryData.map((category, index) => {
                   const total = analyticsData.categoryData.reduce((sum, c) => sum + c.value, 0)
                   const percentage = ((category.value / total) * 100).toFixed(1)
-                  
+
                   return (
                     <tr key={index} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="py-3 px-4">
@@ -384,7 +391,7 @@ const Analytics = () => {
                         </div>
                       </td>
                       <td className="py-3 px-4 text-right font-semibold text-gray-900">
-                        ₹{category.value.toLocaleString('en-IN')}
+                        ₹{(category.value || 0).toLocaleString('en-IN')}
                       </td>
                       <td className="py-3 px-4 text-right text-gray-600">
                         {percentage}%

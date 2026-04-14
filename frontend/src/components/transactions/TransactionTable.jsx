@@ -81,7 +81,9 @@ const TransactionTable = ({ transactions = [], onSort }) => {
                   {transaction.category && (
                     <CategoryEditableCell
                       transactionId={transaction.id}
+                      description={transaction.description || transaction.narration}
                       currentCategory={transaction.category}
+                      allTransactions={transactions}
                       onUpdate={(newCategory) => {
                         // Update transaction in parent component if needed
                         transaction.category = newCategory
@@ -90,9 +92,8 @@ const TransactionTable = ({ transactions = [], onSort }) => {
                   )}
                 </td>
                 <td className="px-6 py-4 text-right">
-                  <span className={`font-semibold text-lg ${
-                    transaction.type === 'credit' || transaction.credit > 0 ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <span className={`font-semibold text-lg ${transaction.type === 'credit' || transaction.credit > 0 ? 'text-green-600' : 'text-red-600'
+                    }`}>
                     {transaction.type === 'credit' || transaction.credit > 0 ? '+' : '-'}
                     ₹{Math.abs(transaction.amount || transaction.credit || transaction.debit || 0).toLocaleString()}
                   </span>
@@ -114,22 +115,22 @@ const TransactionTable = ({ transactions = [], onSort }) => {
                   {new Date(transaction.date || transaction.transaction_date).toLocaleDateString()}
                 </p>
               </div>
-              <span className={`font-semibold text-lg ${
-                transaction.type === 'credit' || transaction.credit > 0 ? 'text-green-600' : 'text-red-600'
-              }`}>
+              <span className={`font-semibold text-lg ${transaction.type === 'credit' || transaction.credit > 0 ? 'text-green-600' : 'text-red-600'
+                }`}>
                 {transaction.type === 'credit' || transaction.credit > 0 ? '+' : '-'}
                 ₹{Math.abs(transaction.amount || transaction.credit || transaction.debit || 0).toLocaleString()}
               </span>
             </div>
-            {transaction.category && (
-              <CategoryEditableCell
-                transactionId={transaction.id}
-                currentCategory={transaction.category}
-                onUpdate={(newCategory) => {
-                  transaction.category = newCategory
-                }}
-              />
-            )}
+            <CategoryEditableCell
+              transactionId={transaction.id}
+              description={transaction.description || transaction.narration}
+              currentCategory={transaction.category}
+              allTransactions={transactions}
+              onUpdate={(newCategory) => {
+                // Update transaction in parent component if needed
+                transaction.category = newCategory
+              }}
+            />
           </motion.div>
         ))}
       </motion.div>

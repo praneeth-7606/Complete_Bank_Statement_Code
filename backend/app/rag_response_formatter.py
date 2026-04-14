@@ -24,19 +24,19 @@ class RAGResponseFormatter:
     }
     
     # Currency patterns
-    CURRENCY_PATTERN = r'₹?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)'
+    CURRENCY_PATTERN = r'?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)'
     
     @staticmethod
     def format_currency(amount: float, include_symbol: bool = True) -> str:
         """Format amount as currency with thousand separators"""
         if isinstance(amount, str):
             try:
-                amount = float(amount.replace('₹', '').replace(',', '').strip())
+                amount = float(amount.replace('', '').replace(',', '').strip())
             except:
                 return str(amount)
         
         formatted = f"{amount:,.2f}"
-        return f"₹{formatted}" if include_symbol else formatted
+        return f"{formatted}" if include_symbol else formatted
     
     @staticmethod
     def extract_numbers(text: str) -> List[float]:
@@ -61,11 +61,11 @@ class RAGResponseFormatter:
         """Extract metrics from response text"""
         metrics = []
         
-        # Pattern for "X spent on Y" or "Total X: ₹Y"
+        # Pattern for "X spent on Y" or "Total X: Y"
         patterns = [
-            r'([\w\s&]+):\s*₹?([\d,]+(?:\.\d{2})?)',
-            r'([\w\s&]+)\s+(?:is|was|of)\s+₹?([\d,]+(?:\.\d{2})?)',
-            r'([\w\s&]+)\s+(?:amount|total|sum)\s+(?:is|was)\s+₹?([\d,]+(?:\.\d{2})?)',
+            r'([\w\s&]+):\s*?([\d,]+(?:\.\d{2})?)',
+            r'([\w\s&]+)\s+(?:is|was|of)\s+?([\d,]+(?:\.\d{2})?)',
+            r'([\w\s&]+)\s+(?:amount|total|sum)\s+(?:is|was)\s+?([\d,]+(?:\.\d{2})?)',
         ]
         
         for pattern in patterns:
@@ -137,8 +137,8 @@ class RAGResponseFormatter:
         transactions = []
         
         # Pattern for transaction-like data
-        # "Date: X, Description: Y, Amount: ₹Z"
-        pattern = r'(?:date|on):\s*([^,]+),\s*(?:description|item):\s*([^,]+),\s*(?:amount|spent):\s*₹?([\d,]+(?:\.\d{2})?)'
+        # "Date: X, Description: Y, Amount: Z"
+        pattern = r'(?:date|on):\s*([^,]+),\s*(?:description|item):\s*([^,]+),\s*(?:amount|spent):\s*?([\d,]+(?:\.\d{2})?)'
         
         matches = re.finditer(pattern, text, re.IGNORECASE)
         for match in matches:

@@ -28,14 +28,14 @@ api.interceptors.response.use(
   (response) => response,
   (error) => {
     console.error('API Error:', error);
-    
+
     // Handle 401 Unauthorized - redirect to login
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
       window.location.href = '/login';
     }
-    
+
     return Promise.reject(error);
   }
 );
@@ -49,7 +49,7 @@ export const statementAPI = {
     if (uploadId) {
       formData.append('upload_id', uploadId);
     }
-    
+
     const response = await api.post('/process-statement/', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -68,7 +68,7 @@ export const statementAPI = {
     if (uploadId) {
       formData.append('upload_id', uploadId);
     }
-    
+
     const response = await api.post('/process-multiple-statements/', formData, {
       headers: {
         'Content-Type': 'multipart/form-data',
@@ -79,9 +79,21 @@ export const statementAPI = {
 };
 
 export const chatAPI = {
-  // Send chat query
-  sendQuery: async (query) => {
-    const response = await api.post('/chat', { query });
+  // Send chat query with optional history
+  sendQuery: async (query, chatHistory = null) => {
+    const response = await api.post('/chat', {
+      query,
+      chat_history: chatHistory
+    });
+    // response.data = { status, data: { answer, metrics, ... } }
+    return response.data;
+  },
+
+  // Send investment chat query
+  sendInvestmentQuery: async (query) => {
+    const response = await api.post('/investment/chat', {
+      query
+    });
     return response.data;
   },
 };

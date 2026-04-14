@@ -59,9 +59,9 @@ class RAGPipeline:
                     environment=settings.PINECONE_ENVIRONMENT,
                     index_name=settings.PINECONE_INDEX_NAME
                 )
-                logger.info("✓ Pinecone vector store initialized successfully")
+                logger.info(" Pinecone vector store initialized successfully")
             except Exception as e:
-                logger.error("❌ Failed to initialize Pinecone: %s", e, exc_info=True)
+                logger.error("[FAIL] Failed to initialize Pinecone: %s", e, exc_info=True)
                 raise
         
         if self.chat_agent is None:
@@ -82,6 +82,12 @@ class RAGPipeline:
         self._ensure_clients()
         if self.vector_db: await self.vector_db.add_transactions(transaction_dicts)
     
+    async def delete_transaction_vector(self, transaction_id: str):
+        """Delete a single transaction vector by ID"""
+        self._ensure_clients()
+        if self.vector_db:
+            await self.vector_db.delete_transaction_vector(transaction_id)
+
     async def delete_transactions_by_upload_id(self, upload_id: str):
         """Delete all transactions for a specific upload from vector DB"""
         self._ensure_clients()
