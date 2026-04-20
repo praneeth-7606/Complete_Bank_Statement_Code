@@ -1135,17 +1135,10 @@ async def update_transaction_category(
         
         # Define allowed categories
         allowed_categories = [
-            'Personal Transfer',
-            'Food & Dining',
-            'Shopping',
-            'Transport',
-            'Bills & Utilities',
-            'Entertainment',
-            'Income',
-            'Investments',
-            'Healthcare',
-            'Education',
-            'Others'
+            'Food & Dining', 'Transportation', 'Shopping', 'Entertainment', 
+            'Bills & Utilities', 'Healthcare', 'Education', 'Travel', 
+            'Investment', 'Dividend', 'Salary', 'Transfer', 
+            'Personal Transfer', 'Other Transfers', 'Other'
         ]
         
         # Validate category

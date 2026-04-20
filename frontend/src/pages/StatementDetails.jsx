@@ -1,11 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { statementsAPI } from '../services/api';
-import { 
+import {
   ArrowLeft,
-  FileText, 
-  Clock, 
-  Database, 
+  FileText,
+  Clock,
+  Database,
   TrendingUp,
   TrendingDown,
   Calendar,
@@ -17,6 +17,7 @@ import {
   Search,
   Trash2
 } from 'lucide-react';
+import { Button, Card, Badge, Skeleton, EmptyState, Input } from '../components/ui';
 
 export default function StatementDetails() {
   const { uploadId } = useParams();
@@ -86,7 +87,7 @@ export default function StatementDetails() {
     try {
       setDeleting(true);
       const result = await statementsAPI.deleteStatement(uploadId);
-      
+
       if (result.status === 'success') {
         // Navigate back to statements page
         navigate('/statements');
@@ -139,10 +140,10 @@ export default function StatementDetails() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-20">
         <div className="text-center">
-          <Loader className="w-12 h-12 text-blue-500 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600">Loading statement details...</p>
+          <Loader className="w-12 h-12 text-indigo-500 animate-spin mx-auto mb-4" />
+          <p className="text-gray-400">Loading statement details...</p>
         </div>
       </div>
     );
@@ -150,13 +151,13 @@ export default function StatementDetails() {
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
+      <div className="flex items-center justify-center py-20">
         <div className="text-center">
-          <AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <p className="text-red-600 mb-4">{error}</p>
+          <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-4" />
+          <p className="text-rose-400 mb-4">{error}</p>
           <button
             onClick={() => navigate('/statements')}
-            className="px-4 py-2 bg-blue-500 text-white rounded-lg hover:bg-blue-600"
+            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
           >
             Back to Statements
           </button>
@@ -166,23 +167,23 @@ export default function StatementDetails() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 p-6">
+    <div className="space-y-6">
       <div className="max-w-7xl mx-auto">
         {/* Header */}
         <div className="mb-6">
           <button
             onClick={() => navigate('/statements')}
-            className="flex items-center text-gray-600 hover:text-gray-900 mb-4"
+            className="flex items-center text-gray-400 hover:text-white mb-4 transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-2" />
             Back to Statements
           </button>
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-4xl font-bold text-gray-900 mb-2">
+              <h1 className="text-3xl sm:text-4xl font-black bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent mb-2">
                 {statement?.filename}
               </h1>
-              <p className="text-gray-600">
+              <p className="text-gray-400">
                 {statement?.bank_name} • {transactions.length} transactions
               </p>
             </div>
@@ -203,21 +204,21 @@ export default function StatementDetails() {
 
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-            <div className="bg-white rounded-xl shadow-2xl max-w-md w-full p-6">
+          <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+            <div className="bg-[#0f0f1a] rounded-xl border border-white/10 max-w-md w-full p-6 shadow-2xl">
               <div className="flex items-start space-x-3 mb-4">
                 <AlertCircle className="w-6 h-6 text-red-600 mt-0.5" />
                 <div className="flex-1">
-                  <h3 className="text-xl font-bold text-gray-900 mb-2">
+                  <h3 className="text-xl font-bold text-white mb-2">
                     Confirm Deletion
                   </h3>
-                  <p className="text-gray-700 mb-3">
+                  <p className="text-gray-400 mb-3">
                     Are you sure you want to delete "{statement?.filename}"?
                   </p>
-                  <p className="text-sm text-gray-600 mb-3">
+                  <p className="text-sm text-gray-500 mb-3">
                     This will permanently remove:
                   </p>
-                  <ul className="text-sm text-gray-700 mb-4 space-y-1 ml-4">
+                  <ul className="text-sm text-gray-400 mb-4 space-y-1 ml-4">
                     <li>• {transactions.length} transactions from database</li>
                     <li>• All search vectors from Pinecone</li>
                     <li>• Statement metadata and insights</li>
@@ -238,7 +239,7 @@ export default function StatementDetails() {
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2 bg-gray-200 text-gray-800 rounded-lg hover:bg-gray-300 transition-colors font-medium disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-white/[0.05] text-white rounded-lg hover:bg-white/[0.1] transition-colors font-medium border border-white/10 disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -248,67 +249,67 @@ export default function StatementDetails() {
         )}
 
         {/* Statement Info Card */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border border-gray-100">
+        <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 mb-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div>
               <p className="text-sm text-gray-500 mb-1">Bank</p>
-              <p className="text-lg font-semibold text-gray-900">{statement?.bank_name}</p>
+              <p className="text-lg font-semibold text-white">{statement?.bank_name}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Extraction Method</p>
-              <p className="text-lg font-semibold text-gray-900">{statement?.extraction_method}</p>
+              <p className="text-lg font-semibold text-white">{statement?.extraction_method}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Processing Time</p>
-              <p className="text-lg font-semibold text-gray-900">
+              <p className="text-lg font-semibold text-white">
                 {statement?.processing_time_seconds?.toFixed(2)}s
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Pages</p>
-              <p className="text-lg font-semibold text-gray-900">{statement?.page_count}</p>
+              <p className="text-lg font-semibold text-white">{statement?.page_count}</p>
             </div>
           </div>
         </div>
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Transactions</p>
-                <p className="text-3xl font-bold text-gray-900">{transactions.length}</p>
+                <p className="text-3xl font-bold text-white">{transactions.length}</p>
               </div>
-              <FileText className="w-12 h-12 text-blue-500 opacity-20" />
+              <FileText className="w-12 h-12 text-indigo-500 opacity-20" />
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Debits</p>
-                <p className="text-3xl font-bold text-red-600">{formatCurrency(totalDebit)}</p>
+                <p className="text-3xl font-bold text-rose-400">{formatCurrency(totalDebit)}</p>
               </div>
-              <TrendingDown className="w-12 h-12 text-red-500 opacity-20" />
+              <TrendingDown className="w-12 h-12 text-rose-500 opacity-20" />
             </div>
           </div>
 
-          <div className="bg-white rounded-xl shadow-lg p-6 border border-gray-100">
+          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Credits</p>
-                <p className="text-3xl font-bold text-green-600">{formatCurrency(totalCredit)}</p>
+                <p className="text-3xl font-bold text-emerald-400">{formatCurrency(totalCredit)}</p>
               </div>
-              <TrendingUp className="w-12 h-12 text-green-500 opacity-20" />
+              <TrendingUp className="w-12 h-12 text-emerald-500 opacity-20" />
             </div>
           </div>
         </div>
 
         {/* Filters */}
-        <div className="bg-white rounded-xl shadow-lg p-6 mb-6 border border-gray-100">
+        <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
+              <label className="block text-sm font-medium text-gray-400 mb-2">
                 <Search className="w-4 h-4 inline mr-2" />
                 Search
               </label>
@@ -317,7 +318,7 @@ export default function StatementDetails() {
                 placeholder="Search transactions..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white placeholder-gray-500"
               />
             </div>
 
@@ -329,7 +330,7 @@ export default function StatementDetails() {
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white appearance-none"
               >
                 <option value="all">All Categories</option>
                 {categories.map(cat => (
@@ -346,7 +347,7 @@ export default function StatementDetails() {
               <select
                 value={filterType}
                 onChange={(e) => setFilterType(e.target.value)}
-                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white appearance-none"
               >
                 <option value="all">All Types</option>
                 <option value="debit">Debits Only</option>
@@ -357,10 +358,10 @@ export default function StatementDetails() {
         </div>
 
         {/* Transactions Table */}
-        <div className="bg-white rounded-xl shadow-lg overflow-hidden border border-gray-100">
+        <div className="bg-white/[0.03] rounded-xl border border-white/5 overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-gray-50 border-b border-gray-200">
+              <thead className="bg-white/[0.02] border-b border-white/5">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Date
@@ -380,39 +381,37 @@ export default function StatementDetails() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
-                {filteredTransactions.map((transaction) => (
-                  <tr key={transaction.id} className="hover:bg-gray-50 transition-colors">
-                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
-                      {formatDate(transaction.date)}
-                    </td>
-                    <td className="px-6 py-4 text-sm text-gray-900">
-                      <div className="max-w-md truncate">{transaction.description}</div>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      <span className={`px-3 py-1 rounded-full text-xs font-medium border ${getCategoryColor(transaction.category)}`}>
-                        {transaction.category}
+                <tr key={transaction.id} className="hover:bg-white/[0.02] transition-colors border-b border-white/5">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                    {formatDate(transaction.date)}
+                  </td>
+                  <td className="px-6 py-4 text-sm text-gray-300">
+                    <div className="max-w-md truncate">{transaction.description}</div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium border bg-white/5 text-gray-300 border-white/10`}>
+                      {transaction.category}
+                    </span>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    {transaction.debit > 0 ? (
+                      <span className="flex items-center text-rose-400 font-medium">
+                        <TrendingDown className="w-4 h-4 mr-1" />
+                        Expense
                       </span>
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap">
-                      {transaction.debit > 0 ? (
-                        <span className="flex items-center text-red-600 font-medium">
-                          <TrendingDown className="w-4 h-4 mr-1" />
-                          Expense
-                        </span>
-                      ) : (
-                        <span className="flex items-center text-green-600 font-medium">
-                          <TrendingUp className="w-4 h-4 mr-1" />
-                          Income
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold">
-                      <span className={transaction.debit > 0 ? 'text-red-600' : 'text-green-600'}>
-                        {formatCurrency(transaction.amount)}
+                    ) : (
+                      <span className="flex items-center text-emerald-400 font-medium">
+                        <TrendingUp className="w-4 h-4 mr-1" />
+                        Income
                       </span>
-                    </td>
-                  </tr>
-                ))}
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-semibold">
+                    <span className={transaction.debit > 0 ? 'text-rose-400' : 'text-emerald-400'}>
+                      {formatCurrency(transaction.amount)}
+                    </span>
+                  </td>
+                </tr>
               </tbody>
             </table>
           </div>

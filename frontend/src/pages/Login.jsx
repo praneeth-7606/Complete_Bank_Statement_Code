@@ -5,7 +5,7 @@ import { Mail, Lock, LogIn, DollarSign, TrendingUp, Shield, Zap } from 'lucide-r
 import { useAuth } from '../context/AuthContext'
 import toast from 'react-hot-toast'
 import { GoogleLogin } from '@react-oauth/google'
-import { Button } from '../components/common'
+import { Button, Input, Card } from '../components/ui'
 
 const Login = () => {
   const [email, setEmail] = useState('')
@@ -20,29 +20,29 @@ const Login = () => {
     setLoading(true)
 
     const result = await login(email, password)
-    
+
     if (result.success) {
       toast.success('Welcome back! 🎉')
       navigate('/')
     } else {
       toast.error(result.error)
     }
-    
+
     setLoading(false)
   }
 
   const handleGoogleSuccess = async (credentialResponse) => {
     setLoading(true)
-    
+
     const result = await googleLogin(credentialResponse.credential)
-    
+
     if (result.success) {
       toast.success('Welcome! 🎉')
       navigate('/')
     } else {
       toast.error(result.error)
     }
-    
+
     setLoading(false)
   }
 
@@ -57,7 +57,7 @@ const Login = () => {
   ]
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-indigo-900 via-purple-900 to-pink-900 flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="min-h-screen bg-[#080810] flex items-center justify-center p-4 relative overflow-hidden">
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
@@ -109,7 +109,7 @@ const Login = () => {
                 <p className="text-indigo-200">Smart Financial Management</p>
               </div>
             </motion.div>
-            
+
             <motion.h2
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -121,7 +121,7 @@ const Login = () => {
                 Like Never Before
               </span>
             </motion.h2>
-            
+
             <motion.p
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
@@ -157,7 +157,7 @@ const Login = () => {
           transition={{ duration: 0.6 }}
           className="flex items-center justify-center"
         >
-          <div className="w-full max-w-md bg-white/95 backdrop-blur-xl rounded-3xl shadow-2xl p-10 border border-white/20">
+          <div className="w-full max-w-md bg-white/[0.03] backdrop-blur-xl rounded-3xl shadow-2xl p-10 border border-white/5">
             {/* Mobile Logo */}
             <div className="lg:hidden text-center mb-8">
               <motion.div
@@ -178,93 +178,83 @@ const Login = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">Welcome Back</h2>
-              <p className="text-gray-600 mb-8">Login to access your financial dashboard</p>
+              <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
+              <p className="text-gray-400 mb-8">Login to access your financial dashboard</p>
             </motion.div>
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {/* Email */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.3 }}
-            >
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Email Address
-              </label>
-              <div className="relative group">
-                <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${
-                  focusedField === 'email' ? 'text-indigo-600' : 'text-gray-400'
-                }`} />
-                <input
+            <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Email */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.3 }}
+              >
+                <Input
                   type="email"
+                  label="Email Address"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   onFocus={() => setFocusedField('email')}
                   onBlur={() => setFocusedField(null)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-gray-900 placeholder-gray-400 hover:border-gray-300"
+                  icon={Mail}
+                  iconPosition="left"
                   placeholder="you@example.com"
+                  fullWidth
                   required
                 />
-              </div>
-            </motion.div>
+              </motion.div>
 
-            {/* Password */}
-            <motion.div
-              initial={{ opacity: 0, x: -20 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: 0.4 }}
-            >
-              <label className="block text-sm font-semibold text-gray-700 mb-2">
-                Password
-              </label>
-              <div className="relative group">
-                <Lock className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${
-                  focusedField === 'password' ? 'text-indigo-600' : 'text-gray-400'
-                }`} />
-                <input
+              {/* Password */}
+              <motion.div
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.4 }}
+              >
+                <Input
                   type="password"
+                  label="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   onFocus={() => setFocusedField('password')}
                   onBlur={() => setFocusedField(null)}
-                  className="w-full pl-12 pr-4 py-3.5 bg-gray-50 border-2 border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-gray-900 placeholder-gray-400 hover:border-gray-300"
+                  icon={Lock}
+                  iconPosition="left"
                   placeholder="••••••••"
+                  fullWidth
                   required
                 />
-              </div>
-            </motion.div>
+              </motion.div>
 
-            {/* Submit Button */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ delay: 0.5 }}
-              className="mt-6"
-            >
-              <Button
-                type="submit"
-                variant="primary"
-                size="lg"
-                loading={loading}
-                icon={LogIn}
-                iconPosition="left"
-                className="w-full"
+              {/* Submit Button */}
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: 0.5 }}
+                className="mt-6"
               >
-                {loading ? 'Logging in...' : 'Login to Dashboard'}
-              </Button>
-            </motion.div>
-          </form>
+                <Button
+                  type="submit"
+                  variant="primary"
+                  size="lg"
+                  loading={loading}
+                  icon={LogIn}
+                  iconPosition="left"
+                  fullWidth
+                >
+                  {loading ? 'Logging in...' : 'Login to Dashboard'}
+                </Button>
+              </motion.div>
+            </form>
 
             {/* Google Login - Only show if configured */}
             {import.meta.env.VITE_GOOGLE_CLIENT_ID && (
               <>
                 <div className="relative my-8">
                   <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-gray-300"></div>
+                    <div className="w-full border-t border-white/10"></div>
                   </div>
                   <div className="relative flex justify-center text-sm">
-                    <span className="px-4 bg-white text-gray-600 font-medium">Or continue with</span>
+                    <span className="px-4 bg-[#0a0a1a] text-gray-400 font-medium">Or continue with</span>
                   </div>
                 </div>
 
@@ -291,10 +281,10 @@ const Login = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.7 }}
-              className="text-center text-sm text-gray-600 mt-8"
+              className="text-center text-sm text-gray-400 mt-8"
             >
               Don't have an account?{' '}
-              <Link to="/signup" className="text-indigo-600 hover:text-indigo-700 font-bold transition-colors">
+              <Link to="/signup" className="text-indigo-400 hover:text-indigo-300 font-bold transition-colors">
                 Sign up for free →
               </Link>
             </motion.p>

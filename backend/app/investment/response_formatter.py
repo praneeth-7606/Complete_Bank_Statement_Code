@@ -42,19 +42,35 @@ class InvestmentResponseFormatter:
         ltp_data = {}
         if symbols_to_fetch:
             try:
+                logger.info(f"Fetching LTP for {len(symbols_to_fetch)} symbols")
                 # Split into batches of 50
                 for i in range(0, len(symbols_to_fetch), 50):
                     batch = symbols_to_fetch[i:i+50]
+                    logger.info(f"Batch {i//50 + 1}: Fetching LTP for symbols: {batch[:5]}...")  # Log first 5
+                    
                     ltp_response = await groww_client.get_ltp("CASH", batch)
+                    logger.info(f"LTP Response status: {ltp_response.get('status')}")
                     
                     if ltp_response.get("status") == "SUCCESS":
                         ltp_payload = ltp_response.get("payload", {})
+                        logger.info(f"LTP Payload keys: {list(ltp_payload.keys())[:5] if isinstance(ltp_payload, dict) else 'Not a dict'}")
+                        
                         if isinstance(ltp_payload, dict):
-                            ltp_data.update(ltp_payload)
+                            # The payload structure might be: { "NSE_SYMBOL": { "ltp": value } }
+                            for symbol_key, price_data in ltp_payload.items():
+                                if isinstance(price_data, dict) and "ltp" in price_data:
+                                    ltp_data[symbol_key] = price_data
+                                    logger.info(f"Got LTP for {symbol_key}: {price_data.get('ltp')}")
+                                elif isinstance(price_data, (int, float)):
+                                    # Sometimes API returns direct value
+                                    ltp_data[symbol_key] = {"ltp": price_data}
+                                    logger.info(f"Got direct LTP for {symbol_key}: {price_data}")
                     else:
-                        logger.warning(f"LTP fetch failed: {ltp_response.get('error', 'Unknown error')}")
+                        error_msg = ltp_response.get('error', 'Unknown error')
+                        logger.warning(f"LTP fetch failed: {error_msg}")
+                        logger.warning(f"Full response: {ltp_response}")
             except Exception as e:
-                logger.error(f"Failed to fetch LTP: {e}")
+                logger.error(f"Failed to fetch LTP: {e}", exc_info=True)
         
         # Calculate totals
         total_investment = 0
@@ -75,8 +91,20 @@ class InvestmentResponseFormatter:
             # Get live price
             nse_symbol = f"NSE_{symbol}"
             ltp = 0
+            
+            # Try to get from batch LTP data
             if nse_symbol in ltp_data:
-                ltp = ltp_data[nse_symbol].get("ltp", 0)
+                price_data = ltp_data[nse_symbol]
+                if isinstance(price_data, dict):
+                    ltp = price_data.get("ltp", 0)
+                elif isinstance(price_data, (int, float)):
+                    ltp = price_data
+                
+                if ltp > 0:
+                    logger.info(f"Found LTP for {symbol}: ₹{ltp}")
+            
+            if ltp == 0:
+                logger.warning(f"No LTP found for {symbol} (tried {nse_symbol})")
             
             # Calculate current value and P&L
             if ltp > 0:

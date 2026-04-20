@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { chatAPI } from '../services/api'
 import RAGResponseFormatter from '../components/chat/RAGResponseFormatter'
+import { Button } from '../components/ui'
 
 // Voice Recognition Imports
 import 'regenerator-runtime/runtime'
@@ -144,7 +145,7 @@ const Chat = () => {
   }
 
   return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col max-w-7xl mx-auto w-full px-2 sm:px-4 lg:px-6 py-4">
+    <div className="h-[calc(100vh-6rem)] flex flex-col w-full py-4">
       {/* Chat Header - Enhanced */}
       <motion.div
         initial={{ opacity: 0, y: -20 }}
@@ -152,10 +153,10 @@ const Chat = () => {
         className="relative overflow-hidden rounded-xl sm:rounded-2xl mb-4 sm:mb-6 shadow-lg sm:shadow-2xl"
       >
         {/* Animated Background */}
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600"></div>
-        <div className="absolute inset-0 opacity-30">
-          <div className="absolute top-0 left-0 w-40 h-40 sm:w-72 sm:h-72 bg-white rounded-full mix-blend-overlay filter blur-3xl animate-pulse"></div>
-          <div className="absolute bottom-0 right-0 w-40 h-40 sm:w-72 sm:h-72 bg-pink-300 rounded-full mix-blend-overlay filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-indigo-900/40 via-purple-900/40 to-pink-900/40"></div>
+        <div className="absolute inset-0 opacity-20">
+          <div className="absolute top-0 left-0 w-40 h-40 sm:w-72 sm:h-72 bg-indigo-500 rounded-full filter blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-0 right-0 w-40 h-40 sm:w-72 sm:h-72 bg-purple-500 rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
         </div>
 
         {/* Content */}
@@ -203,67 +204,66 @@ const Chat = () => {
       </motion.div>
 
       {/* Messages Container - Enhanced */}
-      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl bg-gradient-to-br from-gray-50 to-gray-100 shadow-lg sm:shadow-xl border border-gray-200">
+      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-2xl">
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
           <AnimatePresence>
-            {messages.map((message, index) => (
-              <motion.div
-                key={index}
-                initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                animate={{ opacity: 1, y: 0, scale: 1 }}
-                exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
-                className={`flex gap-4 ${message.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
-              >
-                {/* Avatar */}
+            {messages.map((message, index) => {
+              const isAssistant = message.role === 'assistant';
+              return (
                 <motion.div
-                  whileHover={{ scale: 1.1, rotate: 5 }}
-                  className={`w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-lg sm:rounded-xl lg:rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${message.role === 'user'
-                    ? 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500'
-                    : 'bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500'
-                    }`}
+                  key={index}
+                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
+                  transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
+                  className={`flex gap-4 ${!isAssistant ? 'flex-row-reverse' : 'flex-row'}`}
                 >
-                  {message.role === 'user' ? (
-                    <User className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
-                  ) : (
-                    <Bot className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
-                  )}
-                </motion.div>
+                  {/* Avatar */}
+                  <motion.div
+                    whileHover={{ scale: 1.1, rotate: 5 }}
+                    className={`w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-lg sm:rounded-xl lg:rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${!isAssistant
+                      ? 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500'
+                      : 'bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500'
+                      }`}
+                  >
+                    {!isAssistant ? (
+                      <User className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                    ) : (
+                      <Bot className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
+                    )}
+                  </motion.div>
 
-                {/* Message Bubble */}
-                <div className={`flex-1 max-w-[85%] sm:max-w-[80%] lg:max-w-[75%] ${message.role === 'user' ? 'text-right' : 'text-left'
-                  }`}>
-                  {message.role === 'user' ? (
-                    <motion.div
-                      whileHover={{ scale: 1.01, x: -5 }}
-                      className="inline-block p-4 sm:p-5 lg:p-6 rounded-2xl sm:rounded-3xl lg:rounded-[2rem] shadow-2xl bg-gradient-to-br from-indigo-600 via-purple-600 to-indigo-700 text-white border border-white/10"
-                    >
-                      <div className="whitespace-pre-wrap text-sm sm:text-base lg:text-lg font-medium leading-relaxed tracking-tight">
-                        {message.content}
-                      </div>
-                    </motion.div>
-                  ) : (
-                    <div className="space-y-3">
-                      <div className="bg-white/80 backdrop-blur-md rounded-2xl sm:rounded-3xl lg:rounded-[2rem] p-4 sm:p-6 lg:p-8 shadow-xl border border-white/60">
+                  {/* Message Bubble */}
+                  <div className={`flex-1 max-w-[85%] sm:max-w-[80%] lg:max-w-[75%] ${!isAssistant ? 'text-right' : 'text-left'
+                    }`}>
+                    <div className={`inline-block p-4 sm:p-5 lg:p-6 rounded-2xl sm:rounded-3xl lg:rounded-[2rem] shadow-sm ${isAssistant
+                      ? 'bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-tl-none'
+                      : 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-tr-none'
+                      }`}>
+                      {isAssistant ? (
                         <RAGResponseFormatter
                           response={typeof message.content === 'string' ? { data: { answer: message.content } } : message.content}
                           loading={false}
                         />
-                      </div>
+                      ) : (
+                        <div className="whitespace-pre-wrap text-sm sm:text-base lg:text-lg font-medium leading-relaxed tracking-tight">
+                          {message.content}
+                        </div>
+                      )}
                     </div>
-                  )}
-                  <div className="flex items-center gap-1 sm:gap-2 mt-1 sm:mt-2 px-2">
-                    <p className="text-xs text-gray-500">
-                      {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                    </p>
-                    {message.role === 'assistant' && (
-                      <span className="text-xs text-gray-400 hidden sm:inline">• AI Response</span>
-                    )}
+                    <div className="flex items-center gap-1 sm:gap-2 mt-1 sm:mt-2 px-2">
+                      <p className="text-xs text-[var(--text-secondary)]">
+                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                      </p>
+                      {isAssistant && (
+                        <span className="text-xs text-[var(--text-secondary)] hidden sm:inline">• AI Response</span>
+                      )}
+                    </div>
                   </div>
-                </div>
-              </motion.div>
-            ))}
+                </motion.div>
+              )
+            })}
           </AnimatePresence>
 
           {loading && (
@@ -275,7 +275,7 @@ const Chat = () => {
               <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-xl">
                 <Bot className="w-6 h-6 text-white" />
               </div>
-              <div className="bg-white border-2 border-gray-100 rounded-2xl p-5 shadow-lg">
+              <div className="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-5 shadow-lg">
                 <div className="flex items-center gap-3">
                   <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
                   <div className="flex gap-1">
@@ -295,7 +295,7 @@ const Chat = () => {
                       className="w-2 h-2 bg-pink-600 rounded-full"
                     />
                   </div>
-                  <span className="text-sm text-gray-600">AI is thinking...</span>
+                  <span className="text-sm text-[var(--text-secondary)]">AI is thinking...</span>
                 </div>
               </div>
             </motion.div>
@@ -310,11 +310,11 @@ const Chat = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
-            className="mb-4 sm:mb-6 p-4 sm:p-6 bg-white rounded-xl sm:rounded-2xl border-2 border-gray-200 shadow-lg"
+            className="mb-4 sm:mb-6 p-4 sm:p-6 bg-[var(--bg-card)] rounded-xl sm:rounded-2xl border border-[var(--border-subtle)] shadow-xl"
           >
             <div className="flex items-center gap-2 mb-3 sm:mb-4">
               <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
-              <p className="text-sm sm:text-base font-bold text-gray-900">Try asking me:</p>
+              <p className="text-sm sm:text-base font-bold text-[var(--text-primary)]">Try asking me:</p>
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
               {suggestedQuestions.map((question, index) => {
@@ -325,14 +325,14 @@ const Chat = () => {
                     whileHover={{ scale: 1.05, y: -2 }}
                     whileTap={{ scale: 0.98 }}
                     onClick={() => handleSuggestedQuestion(question.text)}
-                    className="group relative overflow-hidden text-left px-3 sm:px-4 py-3 sm:py-4 bg-gradient-to-br from-gray-50 to-white hover:from-white hover:to-gray-50 rounded-lg sm:rounded-xl transition-all border-2 border-gray-200 hover:border-indigo-300 shadow-sm hover:shadow-xl"
+                    className="group relative overflow-hidden text-left px-3 sm:px-4 py-3 sm:py-4 bg-[var(--bg-surface)] hover:bg-[var(--bg-card)] rounded-lg sm:rounded-xl transition-all border border-[var(--border-subtle)] hover:border-indigo-500/30 shadow-sm"
                   >
                     <div className={`absolute inset-0 bg-gradient-to-br ${question.color} opacity-0 group-hover:opacity-10 transition-opacity`}></div>
                     <div className="relative flex items-center gap-2 sm:gap-3">
                       <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-gradient-to-br ${question.color} flex items-center justify-center shadow-md flex-shrink-0`}>
                         <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
                       </div>
-                      <span className="text-xs sm:text-sm font-medium text-gray-700 group-hover:text-gray-900 flex-1 line-clamp-2">
+                      <span className="text-xs sm:text-sm font-medium text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] flex-1 line-clamp-2">
                         {question.text}
                       </span>
                     </div>
@@ -344,7 +344,7 @@ const Chat = () => {
         )}
 
         {/* Input Form - Enhanced */}
-        <div className="p-3 sm:p-4 lg:p-6 bg-white border-t-2 border-gray-200">
+        <div className="p-3 sm:p-4 lg:p-6 bg-[var(--bg-surface)] border-t border-[var(--border-subtle)]">
           <form onSubmit={handleSubmit} className="space-y-2 sm:space-y-3">
             <div className="flex gap-4 sm:gap-6 items-center">
               <div className="flex-1 relative group">
@@ -353,7 +353,7 @@ const Chat = () => {
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
                   placeholder={listening ? "Listening... Speak now..." : "Ask me anything about your finances..."}
-                  className="w-full px-6 sm:px-8 lg:px-10 py-4 sm:py-5 lg:py-6 pr-24 sm:pr-32 rounded-2xl sm:rounded-3xl lg:rounded-[2.5rem] border-2 border-gray-100 focus:border-indigo-500 focus:ring-8 focus:ring-indigo-500/10 transition-all text-sm sm:text-base lg:text-lg bg-gray-50/50 hover:bg-white focus:bg-white placeholder-gray-400 font-medium shadow-inner"
+                  className="w-full px-6 sm:px-8 lg:px-10 py-4 sm:py-5 lg:py-6 pr-24 sm:pr-32 rounded-2xl sm:rounded-3xl lg:rounded-[2.5rem] border border-[var(--border-subtle)] focus:border-indigo-500 focus:ring-8 focus:ring-indigo-500/10 transition-all text-sm sm:text-base lg:text-lg bg-[var(--bg-card)] hover:bg-[var(--bg-surface)] focus:bg-[var(--bg-surface)] placeholder-[var(--text-secondary)] font-medium text-[var(--text-primary)]"
                   disabled={loading}
                   autoFocus
                 />
@@ -366,7 +366,7 @@ const Chat = () => {
                       onClick={toggleListening}
                       className={`p-2 rounded-full transition-all ${listening
                         ? 'bg-red-500 text-white shadow-lg shadow-red-200'
-                        : 'bg-indigo-50 text-indigo-600 hover:bg-indigo-100'
+                        : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)]'
                         }`}
                     >
                       {listening ? (

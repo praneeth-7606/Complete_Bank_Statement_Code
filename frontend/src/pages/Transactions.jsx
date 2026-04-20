@@ -1,324 +1,572 @@
-import { useState, useEffect } from 'react'
-import { Download, Loader2, X } from 'lucide-react'
-import { motion } from 'framer-motion'
-import { Button } from '../components/common'
-import FilterBar from '../components/transactions/FilterBar'
-import TransactionTable from '../components/transactions/TransactionTable'
-import { pageTransition } from '../utils/animations'
-import { statementsAPI } from '../services/api'
-import api from '../services/api'
+import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react'
+import { Download, Loader2, X, Search, SlidersHorizontal, TrendingUp, TrendingDown, ChevronLeft, ChevronRight, Filter, ArrowUpDown, Check } from 'lucide-react'
+import { motion, AnimatePresence } from 'framer-motion'
+import api, { transactionsAPI } from '../services/api'
 import toast from 'react-hot-toast'
+import { Button, Badge, Skeleton, EmptyState, Card } from '../components/ui'
 
-const Transactions = () => {
-  // Filter state
-  const [filters, setFilters] = useState({
-    categories: [],
-    type: 'all',
-    search: ''
-  })
+// ─── Category badge color map ─────────────────────────────────────────────────
+const CATEGORY_COLORS = {
+  'Food & Dining': '#f59e0b',
+  'Shopping': '#8b5cf6',
+  'Transportation': '#06b6d4',
+  'Entertainment': '#ec4899',
+  'Healthcare': '#10b981',
+  'Utilities': '#6366f1',
+  'Education': '#3b82f6',
+  'Travel': '#f97316',
+  'Groceries': '#84cc16',
+  'Other': '#6b7280'
+}
+const getCategoryColor = cat => CATEGORY_COLORS[cat] || '#6b7280'
 
-  // Pagination state
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 20,
-    total: 0,
-    totalPages: 0
-  })
+// ─── Category Pill ────────────────────────────────────────────────────────────
+const CategoryPill = memo(({ category }) => {
+  const variantMap = {
+    'Food & Dining': 'warning',
+    'Shopping': 'ai',
+    'Transportation': 'primary',
+    'Entertainment': 'danger',
+    'Healthcare': 'success',
+    'Utilities': 'primary',
+    'Education': 'primary',
+    'Travel': 'warning',
+    'Groceries': 'success',
+    'Other': 'default'
+  }
+  return <Badge variant={variantMap[category] || 'default'} size="sm">{category}</Badge>
+})
+CategoryPill.displayName = 'CategoryPill'
 
-  // Data state
-  const [transactions, setTransactions] = useState([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState(null)
+// ─── Transaction Row ──────────────────────────────────────────────────────────
+const TransactionRow = memo(({ txn, index, onUpdateCategory }) => {
+  const isCredit = txn.credit > 0
+  const amount = isCredit ? parseFloat(txn.credit) : parseFloat(txn.debit)
+  const [isEditing, setIsEditing] = useState(false)
+  const [loading, setLoading] = useState(false)
 
-  // Fetch transactions with filters and pagination
-  const fetchTransactions = async (pageNum = 1) => {
+  const handleUpdate = async (newCat) => {
+    if (newCat === txn.category) {
+      setIsEditing(false)
+      return
+    }
+    setLoading(true)
     try {
-      setLoading(true)
-      setError(null)
-
-      // Build query parameters
-      const params = {
-        page: pageNum,
-        limit: pagination.limit
-      }
-
-      if (filters.categories && filters.categories.length > 0) {
-        // Send as a comma-separated string for simplicity with the modified backend
-        params.categories = filters.categories.join(',')
-      }
-      if (filters.type && filters.type !== 'all') {
-        params.type = filters.type
-      }
-      if (filters.search && filters.search.trim()) {
-        params.search = filters.search.trim()
-      }
-
-      // Fetch from backend using axios
-      const response = await api.get('/api/transactions/filtered', { params })
-
-      if (response.data.status === 'success') {
-        setTransactions(response.data.data.transactions)
-        setPagination({
-          page: response.data.data.page,
-          limit: response.data.data.limit,
-          total: response.data.data.total,
-          totalPages: response.data.data.total_pages
-        })
-      } else {
-        throw new Error('Invalid response from server')
-      }
-    } catch (error) {
-      console.error('Error fetching transactions:', error)
-      setError(error.message || 'Failed to load transactions')
-      toast.error('Failed to load transactions')
-      setTransactions([])
+      await onUpdateCategory(txn.id, newCat)
+      setIsEditing(false)
+    } catch (err) {
+      // Error handled in parent
     } finally {
       setLoading(false)
     }
   }
 
-  // Fetch on component mount
-  useEffect(() => {
-    fetchTransactions(1)
+  return (
+    <motion.tr
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ delay: index * 0.025, duration: 0.3 }}
+      className="group border-b transition-colors"
+      style={{ borderColor: 'rgba(255,255,255,0.04)' }}
+    >
+      {/* Type icon */}
+      <td className="py-3.5 pl-4 pr-2 w-10">
+        <div className="w-8 h-8 rounded-xl flex items-center justify-center"
+          style={{ background: isCredit ? 'rgba(16,185,129,0.12)' : 'rgba(239,68,68,0.12)' }}>
+          {isCredit
+            ? <TrendingUp className="w-3.5 h-3.5 text-emerald-400" />
+            : <TrendingDown className="w-3.5 h-3.5 text-rose-400" />}
+        </div>
+      </td>
+
+      {/* Date */}
+      <td className="py-3.5 px-3 whitespace-nowrap">
+        <span className="text-xs text-[var(--text-secondary)] font-medium">{txn.date || '—'}</span>
+      </td>
+
+      {/* Description */}
+      <td className="py-3.5 px-3 max-w-[180px] sm:max-w-xs">
+        <p className="text-sm font-semibold text-[var(--text-primary)] truncate">{txn.description}</p>
+        {txn.reference && <p className="text-xs text-[var(--text-secondary)] truncate">{txn.reference}</p>}
+      </td>
+
+      {/* Category */}
+      <td className="py-3.5 px-3 hidden sm:table-cell">
+        {isEditing ? (
+          <div className="flex items-center gap-2">
+            <select
+              autoFocus
+              disabled={loading}
+              value={txn.category || 'Other'}
+              onChange={(e) => handleUpdate(e.target.value)}
+              onBlur={() => !loading && setIsEditing(false)}
+              className="bg-[var(--bg-surface)] text-xs border border-[var(--border-subtle)] rounded-lg px-2 py-1 outline-none text-[var(--text-primary)]"
+            >
+              {CATEGORIES.map(cat => (
+                <option key={cat} value={cat}>{cat}</option>
+              ))}
+            </select>
+            {loading && <Loader2 className="w-3 h-3 animate-spin text-gray-400" />}
+          </div>
+        ) : (
+          <div className="cursor-pointer hover:opacity-80 transition-opacity" onClick={() => setIsEditing(true)}>
+            <CategoryPill category={txn.category || 'Other'} />
+          </div>
+        )}
+      </td>
+
+      {/* Amount */}
+      <td className="py-3.5 pl-3 pr-4 text-right whitespace-nowrap">
+        <span className={`text-sm font-bold ${isCredit ? 'text-emerald-400' : 'text-rose-400'}`}>
+          {isCredit ? '+' : '-'}₹{amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+        </span>
+      </td>
+    </motion.tr>
+  )
+})
+TransactionRow.displayName = 'TransactionRow'
+
+// ─── Active Filter Chip ───────────────────────────────────────────────────────
+const FilterChip = memo(({ label, onRemove, color = '#6366f1' }) => (
+  <motion.div
+    initial={{ scale: 0.85, opacity: 0 }}
+    animate={{ scale: 1, opacity: 1 }}
+    exit={{ scale: 0.85, opacity: 0 }}
+    className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-semibold"
+    style={{ background: `${color}18`, color, border: `1px solid ${color}30` }}
+  >
+    {label}
+    <button onClick={onRemove} className="hover:opacity-70 transition-opacity ml-0.5">
+      <X className="w-3 h-3" />
+    </button>
+  </motion.div>
+))
+FilterChip.displayName = 'FilterChip'
+
+// ─── MAIN COMPONENT ──────────────────────────────────────────────────────────
+const CATEGORIES = ['Food & Dining', 'Transportation', 'Shopping', 'Entertainment', 'Bills & Utilities', 'Healthcare', 'Education', 'Travel', 'Investment', 'Dividend', 'Salary', 'Transfer', 'Personal Transfer', 'Other Transfers', 'Other']
+
+const Transactions = () => {
+  const [filters, setFilters] = useState({ categories: [], type: 'all', search: '' })
+  const [pagination, setPagination] = useState({ page: 1, limit: 20, total: 0, totalPages: 0 })
+  const [transactions, setTransactions] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState(null)
+  const [showFilterPanel, setShowFilterPanel] = useState(false)
+  const searchRef = useRef(null)
+  const searchDebounce = useRef(null)
+
+  // ── Fetch ──
+  const fetchTransactions = useCallback(async (pageNum = 1, currentFilters = filters) => {
+    try {
+      setLoading(true)
+      setError(null)
+      const params = { page: pageNum, limit: pagination.limit }
+      if (currentFilters.categories.length > 0) params.categories = currentFilters.categories.join(',')
+      if (currentFilters.type !== 'all') params.type = currentFilters.type
+      if (currentFilters.search.trim()) params.search = currentFilters.search.trim()
+
+      const response = await api.get('/api/transactions/filtered', { params })
+      if (response.data.status === 'success') {
+        setTransactions(response.data.data.transactions)
+        setPagination(prev => ({
+          ...prev,
+          page: response.data.data.page,
+          total: response.data.data.total,
+          totalPages: response.data.data.total_pages
+        }))
+      }
+    } catch (err) {
+      setError(err.message || 'Failed to load transactions')
+      toast.error('Failed to load transactions')
+    } finally {
+      setLoading(false)
+    }
+  }, [filters, pagination.limit])
+
+  useEffect(() => { fetchTransactions(1) }, [])
+
+  // Debounced search
+  const handleSearchChange = useCallback((val) => {
+    clearTimeout(searchDebounce.current)
+    setFilters(prev => ({ ...prev, search: val }))
+    searchDebounce.current = setTimeout(() => {
+      setFilters(prev => {
+        const next = { ...prev, search: val }
+        fetchTransactions(1, next)
+        return next
+      })
+    }, 400)
+  }, [fetchTransactions])
+
+  const handleTypeChange = useCallback((type) => {
+    setFilters(prev => {
+      const next = { ...prev, type }
+      fetchTransactions(1, next)
+      return next
+    })
+  }, [fetchTransactions])
+
+  const toggleCategory = useCallback((cat) => {
+    setFilters(prev => {
+      const cats = prev.categories.includes(cat)
+        ? prev.categories.filter(c => c !== cat)
+        : [...prev.categories, cat]
+      const next = { ...prev, categories: cats }
+      fetchTransactions(1, next)
+      return next
+    })
+  }, [fetchTransactions])
+
+  const clearAll = useCallback(() => {
+    const next = { categories: [], type: 'all', search: '' }
+    setFilters(next)
+    if (searchRef.current) searchRef.current.value = ''
+    fetchTransactions(1, next)
+  }, [fetchTransactions])
+
+  const handlePage = useCallback((p) => {
+    fetchTransactions(p)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [fetchTransactions])
+
+  const handleCategoryUpdate = useCallback(async (txnId, newCategory) => {
+    try {
+      await transactionsAPI.updateCategory(txnId, newCategory)
+      setTransactions(prev => prev.map(t =>
+        t.id === txnId ? { ...t, category: newCategory } : t
+      ))
+      toast.success('Category updated successfully')
+    } catch (err) {
+      toast.error(err.response?.data?.detail || 'Failed to update category')
+      throw err
+    }
   }, [])
 
-  // Refetch when filters change
-  useEffect(() => {
-    fetchTransactions(1)
-  }, [filters])
-
-  const handleFilterChange = ({ categories, type }) => {
-    setFilters(prev => ({
-      ...prev,
-      categories: categories || [],
-      type: type === 'all' ? 'all' : type
-    }))
-  }
-
-  const handleSearchChange = (term) => {
-    setFilters(prev => ({
-      ...prev,
-      search: term
-    }))
-  }
-
-  const removeCategory = (cat) => {
-    setFilters(prev => ({
-      ...prev,
-      categories: prev.categories.filter(c => c !== cat)
-    }))
-  }
-
-  const removeType = () => {
-    setFilters(prev => ({
-      ...prev,
-      type: 'all'
-    }))
-  }
-
-  const clearAllFilters = () => {
-    setFilters({
-      categories: [],
-      type: 'all',
-      search: ''
-    })
-  }
-
-  const handlePageChange = (page) => {
-    fetchTransactions(page)
-    window.scrollTo({ top: 0, behavior: 'smooth' })
-  }
-
-  const handleExport = () => {
+  const handleExport = useCallback(() => {
+    if (!transactions.length) return
     const csv = [
       ['Date', 'Description', 'Category', 'Type', 'Amount'],
       ...transactions.map(t => [
-        t.date,
-        t.description,
-        t.category || 'N/A',
+        t.date, t.description, t.category || 'N/A',
         t.credit > 0 ? 'income' : 'expense',
-        t.amount
+        t.credit > 0 ? t.credit : t.debit
       ])
-    ].map(row => row.join(',')).join('\n')
-
+    ].map(r => r.join(',')).join('\n')
     const blob = new Blob([csv], { type: 'text/csv' })
-    const url = window.URL.createObjectURL(blob)
+    const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
     a.download = `transactions_${new Date().toISOString().split('T')[0]}.csv`
     a.click()
-  }
+    URL.revokeObjectURL(url)
+    toast.success('CSV exported!')
+  }, [transactions])
 
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center min-h-[60vh]">
-        <div className="text-center">
-          <Loader2 className="w-16 h-16 text-indigo-600 animate-spin mx-auto mb-4" />
-          <p className="text-gray-600 text-lg">Loading transactions...</p>
-        </div>
-      </div>
-    )
-  }
+  const hasFilters = useMemo(
+    () => filters.categories.length > 0 || filters.type !== 'all' || filters.search,
+    [filters]
+  )
 
-  if (error) {
-    return (
-      <motion.div {...pageTransition} className="space-y-6">
-        <div className="bg-red-50 border-2 border-red-200 rounded-2xl p-6">
-          <h3 className="text-lg font-semibold text-red-900 mb-2">Error Loading Transactions</h3>
-          <p className="text-red-700 mb-4">{error}</p>
-          <Button
-            variant="primary"
-            onClick={() => fetchTransactions(1)}
-          >
-            Retry
-          </Button>
-        </div>
-      </motion.div>
-    )
-  }
+  const totalIncome = useMemo(() => transactions.reduce((s, t) => s + (parseFloat(t.credit) || 0), 0), [transactions])
+  const totalExpenses = useMemo(() => transactions.reduce((s, t) => s + (parseFloat(t.debit) || 0), 0), [transactions])
 
   return (
-    <motion.div {...pageTransition} className="space-y-4 sm:space-y-6">
-      {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 sm:gap-4">
+    <div className="space-y-5">
+
+      {/* ── HEADER ── */}
+      <motion.div
+        initial={{ opacity: 0, y: -16 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+      >
         <div>
-          <h2 className="text-2xl sm:text-3xl font-bold text-gray-900">Transactions</h2>
-          <p className="text-xs sm:text-sm text-gray-600 mt-1">
-            Showing {transactions.length} of {pagination.total} transactions
+          <h1 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+            Transactions
+          </h1>
+          <p className="text-xs text-gray-600 mt-0.5">
+            {loading ? 'Loading…' : `${pagination.total} transactions total`}
           </p>
         </div>
-        <Button
-          variant="primary"
-          icon={Download}
-          iconPosition="left"
+        <button
           onClick={handleExport}
-          disabled={transactions.length === 0}
-          className="w-full sm:w-auto"
+          disabled={!transactions.length}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+          style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
         >
+          <Download className="w-4 h-4" />
           Export CSV
-        </Button>
-      </div>
+        </button>
+      </motion.div>
 
-      {/* Filters */}
-      <FilterBar
-        filters={filters}
-        onFilterChange={handleFilterChange}
-        onSearchChange={handleSearchChange}
-      />
-
-      {/* Active Filter Chips */}
-      {(filters.categories.length > 0 || filters.type !== 'all' || filters.search) && (
-        <div className="flex flex-wrap items-center gap-2 py-2">
-          <span className="text-sm font-medium text-gray-500 mr-2">Active Filters:</span>
-
-          {filters.search && (
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex items-center gap-1 px-3 py-1 bg-indigo-50 border border-indigo-200 text-indigo-700 rounded-full text-xs font-medium"
-            >
-              Search: "{filters.search}"
-              <button
-                onClick={() => handleSearchChange('')}
-                className="hover:text-indigo-900 ml-1"
-              >
-                <X size={14} />
-              </button>
-            </motion.div>
-          )}
-
-          {filters.type !== 'all' && (
-            <motion.div
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex items-center gap-1 px-3 py-1 bg-purple-50 border border-purple-200 text-purple-700 rounded-full text-xs font-medium capitalize"
-            >
-              Type: {filters.type}
-              <button
-                onClick={removeType}
-                className="hover:text-purple-900 ml-1"
-              >
-                <X size={14} />
-              </button>
-            </motion.div>
-          )}
-
-          {filters.categories.map((cat) => (
-            <motion.div
-              key={cat}
-              initial={{ scale: 0.8, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              className="flex items-center gap-1 px-3 py-1 bg-blue-50 border border-blue-200 text-blue-700 rounded-full text-xs font-medium"
-            >
-              {cat}
-              <button
-                onClick={() => removeCategory(cat)}
-                className="hover:text-blue-900 ml-1"
-              >
-                <X size={14} />
-              </button>
-            </motion.div>
-          ))}
-
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={clearAllFilters}
-            className="text-xs text-gray-500 hover:text-indigo-600 ml-2"
-          >
-            Clear All
-          </Button>
-        </div>
-      )}
-
-      {/* Transactions Table */}
-      {transactions.length > 0 ? (
-        <TransactionTable
-          transactions={transactions}
-          onSort={(field, direction) => {
-            // Sorting is handled by backend, but we can implement client-side sorting if needed
-          }}
-        />
-      ) : (
-        <div className="bg-white rounded-2xl shadow-lg border border-gray-100 p-8 text-center">
-          <p className="text-gray-600">No transactions found matching your filters.</p>
-        </div>
-      )}
-
-      {/* Pagination */}
-      {transactions.length > 0 && pagination.totalPages > 1 && (
-        <div className="bg-white rounded-xl sm:rounded-2xl shadow-lg border border-gray-100 p-3 sm:p-4">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 sm:gap-4">
-            <p className="text-xs sm:text-sm text-gray-600 text-center sm:text-left">
-              Page {pagination.page} of {pagination.totalPages} ({pagination.total} total)
-            </p>
-            <div className="flex items-center gap-2 w-full sm:w-auto justify-center sm:justify-end">
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => handlePageChange(pagination.page - 1)}
-                disabled={pagination.page === 1}
-                className="flex-1 sm:flex-none"
-              >
-                Previous
-              </Button>
-              <span className="px-2 sm:px-4 py-2 text-xs sm:text-sm font-medium text-gray-700 whitespace-nowrap">
-                {pagination.page} / {pagination.totalPages}
-              </span>
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={() => handlePageChange(pagination.page + 1)}
-                disabled={pagination.page === pagination.totalPages}
-                className="flex-1 sm:flex-none"
-              >
-                Next
-              </Button>
+      {/* ── SUMMARY PILLS ── */}
+      {!loading && (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.1 }}
+          className="flex flex-wrap gap-3">
+          {[
+            { label: 'Showing', value: `${transactions.length} of ${pagination.total}`, color: '#6b7280' },
+            { label: 'Income', value: `₹${totalIncome.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, color: '#10b981' },
+            { label: 'Expenses', value: `₹${totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, color: '#ef4444' }
+          ].map((item, i) => (
+            <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
+              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <span className="text-xs text-gray-500">{item.label}</span>
+              <span className="text-sm font-bold" style={{ color: item.color }}>{item.value}</span>
             </div>
+          ))}
+        </motion.div>
+      )}
+
+      {/* ── SEARCH + FILTER BAR ── */}
+      <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}
+        className="flex flex-col sm:flex-row gap-3">
+
+        {/* Search */}
+        <div className="flex-1 relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          <input
+            ref={searchRef}
+            type="text"
+            defaultValue={filters.search}
+            onChange={e => handleSearchChange(e.target.value)}
+            placeholder="Search transactions…"
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm text-gray-200 placeholder-gray-600 outline-none transition-all focus:ring-2"
+            style={{
+              background: 'rgba(255,255,255,0.04)',
+              border: '1px solid rgba(255,255,255,0.09)',
+              '--tw-ring-color': 'rgba(99,102,241,0.4)'
+            }}
+          />
+        </div>
+
+        {/* Type toggle */}
+        <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+          {['all', 'income', 'expense'].map(t => (
+            <button key={t} onClick={() => handleTypeChange(t)}
+              className="px-3 py-2 rounded-lg text-xs font-semibold capitalize transition-all"
+              style={filters.type === t
+                ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }
+                : { color: '#6b7280' }}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {/* Filter toggle */}
+        <button
+          onClick={() => setShowFilterPanel(v => !v)}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
+          style={{
+            background: showFilterPanel ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
+            border: showFilterPanel ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.09)',
+            color: showFilterPanel ? '#a5b4fc' : '#6b7280'
+          }}
+        >
+          <SlidersHorizontal className="w-4 h-4" />
+          Filters
+          {filters.categories.length > 0 && (
+            <span className="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center"
+              style={{ background: '#6366f1', color: '#fff' }}>
+              {filters.categories.length}
+            </span>
+          )}
+        </button>
+      </motion.div>
+
+      {/* ── FILTER PANEL ── */}
+      <AnimatePresence>
+        {showFilterPanel && (
+          <motion.div
+            initial={{ height: 0, opacity: 0 }}
+            animate={{ height: 'auto', opacity: 1 }}
+            exit={{ height: 0, opacity: 0 }}
+            transition={{ duration: 0.25 }}
+            className="overflow-hidden"
+          >
+            <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+              <div className="flex items-center justify-between mb-3">
+                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Filter by Category</p>
+                {filters.categories.length > 0 && (
+                  <button
+                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                    onClick={() => {
+                      const next = { ...filters, categories: [] }
+                      setFilters(next)
+                      fetchTransactions(1, next)
+                    }}>
+                    Clear
+                  </button>
+                )}
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {CATEGORIES.map(cat => {
+                  const active = filters.categories.includes(cat)
+                  const color = getCategoryColor(cat)
+                  return (
+                    <button key={cat} onClick={() => toggleCategory(cat)}
+                      className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+                      style={active
+                        ? { background: `${color}25`, color, border: `1px solid ${color}50` }
+                        : { background: 'rgba(255,255,255,0.04)', color: '#6b7280', border: '1px solid rgba(255,255,255,0.08)' }}>
+                      {cat}
+                    </button>
+                  )
+                })}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── ACTIVE FILTER CHIPS ── */}
+      <AnimatePresence>
+        {hasFilters && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="flex flex-wrap items-center gap-2"
+          >
+            <span className="text-xs text-gray-600 font-medium">Active:</span>
+            {filters.search && (
+              <FilterChip label={`"${filters.search}"`} color="#6366f1"
+                onRemove={() => { handleSearchChange(''); if (searchRef.current) searchRef.current.value = '' }} />
+            )}
+            {filters.type !== 'all' && (
+              <FilterChip label={filters.type} color="#8b5cf6"
+                onRemove={() => handleTypeChange('all')} />
+            )}
+            {filters.categories.map(cat => (
+              <FilterChip key={cat} label={cat} color={getCategoryColor(cat)}
+                onRemove={() => toggleCategory(cat)} />
+            ))}
+            <button onClick={clearAll} className="text-xs text-gray-500 hover:text-rose-400 transition-colors font-medium ml-1">
+              Clear all
+            </button>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── TABLE ── */}
+      {loading ? (
+        <div className="flex items-center justify-center py-20">
+          <div className="text-center">
+            <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
+              className="w-10 h-10 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 mx-auto mb-3" />
+            <p className="text-gray-600 text-sm">Loading transactions…</p>
           </div>
         </div>
+      ) : error ? (
+        <div className="rounded-2xl p-8 text-center" style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)' }}>
+          <p className="text-rose-400 mb-4">{error}</p>
+          <button onClick={() => fetchTransactions(1)} className="px-5 py-2 rounded-xl bg-rose-500/20 text-rose-300 text-sm font-semibold border border-rose-500/30">
+            Retry
+          </button>
+        </div>
+      ) : transactions.length === 0 ? (
+        <div className="rounded-2xl p-12 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
+          <Filter className="w-10 h-10 text-gray-700 mx-auto mb-3" />
+          <p className="text-gray-500 text-sm">No transactions match your filters</p>
+          {hasFilters && (
+            <button onClick={clearAll} className="mt-3 text-indigo-400 text-xs hover:text-indigo-300 transition-colors">Clear filters</button>
+          )}
+        </div>
+      ) : (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ delay: 0.1 }}
+          className="rounded-2xl overflow-hidden"
+          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.07)' }}
+        >
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                  <th className="w-10 py-3 pl-4" />
+                  <th className="py-3 px-3 text-left">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Date</span>
+                  </th>
+                  <th className="py-3 px-3 text-left">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Description</span>
+                  </th>
+                  <th className="py-3 px-3 text-left hidden sm:table-cell">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Category</span>
+                  </th>
+                  <th className="py-3 pl-3 pr-4 text-right">
+                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Amount</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <AnimatePresence mode="sync">
+                  {transactions.map((txn, i) => (
+                    <TransactionRow
+                      key={txn.id || i}
+                      txn={txn}
+                      index={i}
+                      onUpdateCategory={handleCategoryUpdate}
+                    />
+                  ))}
+                </AnimatePresence>
+              </tbody>
+            </table>
+          </div>
+        </motion.div>
       )}
-    </motion.div>
+
+      {/* ── PAGINATION ── */}
+      {!loading && transactions.length > 0 && pagination.totalPages > 1 && (
+        <motion.div
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          className="flex flex-col sm:flex-row items-center justify-between gap-3 px-1"
+        >
+          <p className="text-xs text-gray-600">
+            Page <span className="text-gray-400 font-semibold">{pagination.page}</span> of <span className="text-gray-400 font-semibold">{pagination.totalPages}</span>
+            <span className="ml-2 text-gray-600">({pagination.total} total)</span>
+          </p>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => handlePage(pagination.page - 1)}
+              disabled={pagination.page === 1}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: '#9ca3af' }}
+            >
+              <ChevronLeft className="w-4 h-4" />
+              Prev
+            </button>
+
+            {/* Page numbers (show ±2 around current) */}
+            <div className="hidden sm:flex items-center gap-1">
+              {Array.from({ length: Math.min(5, pagination.totalPages) }, (_, i) => {
+                const start = Math.max(1, Math.min(pagination.page - 2, pagination.totalPages - 4))
+                const pg = start + i
+                if (pg > pagination.totalPages) return null
+                return (
+                  <button key={pg} onClick={() => handlePage(pg)}
+                    className="w-9 h-9 rounded-xl text-sm font-semibold transition-all"
+                    style={pg === pagination.page
+                      ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }
+                      : { background: 'rgba(255,255,255,0.04)', color: '#6b7280', border: '1px solid rgba(255,255,255,0.07)' }}>
+                    {pg}
+                  </button>
+                )
+              })}
+            </div>
+
+            <button
+              onClick={() => handlePage(pagination.page + 1)}
+              disabled={pagination.page === pagination.totalPages}
+              className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-sm font-semibold transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+              style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: '#9ca3af' }}
+            >
+              Next
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </motion.div>
+      )}
+    </div>
   )
 }
 

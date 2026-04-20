@@ -131,7 +131,7 @@ class PatternEngine:
 class CategorizationAgent:
     """Production-grade self-learning financial intelligence engine."""
     
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name, 
             temperature=0, 

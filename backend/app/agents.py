@@ -41,7 +41,7 @@ class BatchStructuredTransactions(BaseModel):
 class TransactionStructuringAgent:
     """Parses raw transaction lines into structured JSON using LangChain (LLM-First, No Agent Loop)."""
     
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name, 
             temperature=0.1,
@@ -91,7 +91,7 @@ from .agent_analyst import FinancialAnalystAgent
 class FinancialChatAgent(BaseAgent):
     """Generates a natural language response for the chat API - OPTIMIZED FOR SPEED."""
     
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         # Use stable Gemini Flash model (better rate limits)
         super().__init__(model_name)
     
@@ -170,7 +170,7 @@ class RoutePayload(BaseModel):
 class QueryRouterAgent:
     """Analyzes a user query to decide between vector search and filter-based search using Structured Output."""
     
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name, 
             temperature=0.1,

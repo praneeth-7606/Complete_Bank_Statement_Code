@@ -80,7 +80,7 @@ def calculate_savings_rate(total_income: float, total_expenses: float) -> float:
 class FinancialAnalystAgent(BaseAgent):
     """Production-grade financial insights generator using an Agent-driven approach with strictly deterministic tools and LangGraph."""
     
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview"):
+    def __init__(self, model_name="gemini-2.5-flash"):
         super().__init__(model_name=model_name)
         
         # Tools for the Insights Agent

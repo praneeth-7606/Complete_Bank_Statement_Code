@@ -21,7 +21,7 @@ def extract_json_from_response(text: str) -> Any:
 
 class BaseAgent:
     """A base class for generative AI agents using LangChain with consistent auth and retry logic."""
-    def __init__(self, model_name="gemini-3.1-flash-lite-preview", temperature=0.3):
+    def __init__(self, model_name="gemini-2.0-flash", temperature=0.3):
         self.llm = ChatGoogleGenerativeAI(
             model=model_name, 
             temperature=temperature,

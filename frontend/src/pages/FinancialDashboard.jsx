@@ -1,9 +1,9 @@
 import { useState, useEffect } from 'react'
 import { Link } from 'react-router-dom'
-import { 
-  TrendingUp, 
-  TrendingDown, 
-  Wallet, 
+import {
+  TrendingUp,
+  TrendingDown,
+  Wallet,
   FileText,
   ArrowUpRight,
   DollarSign,
@@ -38,15 +38,15 @@ const FinancialDashboard = () => {
   const fetchDashboardData = async () => {
     try {
       setLoading(true)
-      
+
       // Fetch all statements from backend
       const statements = await statementsAPI.getAllStatements()
-      
+
       if (statements && statements.length > 0) {
         let allTransactions = []
         let totalIncome = 0
         let totalExpenses = 0
-        
+
         // Fetch transactions from each statement
         for (const statement of statements) {
           try {
@@ -58,12 +58,12 @@ const FinancialDashboard = () => {
             console.warn(`Failed to fetch details for statement ${statement.upload_id}:`, error)
           }
         }
-        
+
         // Calculate stats from backend data
         totalIncome = allTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
         totalExpenses = allTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
         const balance = totalIncome - totalExpenses
-        
+
         // Update state with backend data
         setStats({
           totalTransactions: allTransactions.length,
@@ -71,7 +71,7 @@ const FinancialDashboard = () => {
           totalExpenses: totalExpenses,
           balance: balance,
         })
-        
+
         // Set recent transactions (last 10)
         setRecentTransactions(allTransactions.slice(0, 10).map(t => ({
           description: t.description || 'N/A',
@@ -80,7 +80,7 @@ const FinancialDashboard = () => {
           type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
           category: t.category || 'Uncategorized'
         })))
-        
+
         // Save to localStorage as cache
         const dashboardData = {
           stats: {
@@ -118,7 +118,7 @@ const FinancialDashboard = () => {
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
-      
+
       // Fallback to localStorage
       const savedData = localStorage.getItem('dashboardData')
       if (savedData) {
@@ -209,7 +209,7 @@ const FinancialDashboard = () => {
   return (
     <div className="space-y-6">
       {/* Welcome Section */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
         className="card bg-gradient-to-r from-blue-600 to-green-600 text-white"
@@ -258,7 +258,7 @@ const FinancialDashboard = () => {
       </motion.div>
 
       {/* Stats Grid */}
-      <motion.div 
+      <motion.div
         ref={ref}
         variants={containerVariants}
         initial="hidden"
@@ -286,9 +286,8 @@ const FinancialDashboard = () => {
                       <CountUp end={stat.value} duration={2} />
                     )}
                   </h3>
-                  <div className={`flex items-center gap-1 text-sm mt-2 ${
-                    stat.trendUp ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <div className={`flex items-center gap-1 text-sm mt-2 ${stat.trendUp ? 'text-green-600' : 'text-red-600'
+                    }`}>
                     <ArrowUpRight className={`w-4 h-4 ${!stat.trendUp && 'rotate-90'}`} />
                     <span className="font-semibold">{stat.trend}</span>
                     <span className="text-gray-500">vs last month</span>
@@ -306,13 +305,13 @@ const FinancialDashboard = () => {
       {/* Quick Actions & Recent Transactions */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Quick Actions */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: -20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.3 }}
           className="card"
         >
-          <h3 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h3>
+          <h3 className="text-xl font-bold text-[var(--text-primary)] mb-4">Quick Actions</h3>
           <div className="space-y-3">
             {[
               { to: '/upload', icon: UploadIcon, title: 'Upload Statement', desc: 'Process bank PDFs', color: 'blue' },
@@ -323,14 +322,14 @@ const FinancialDashboard = () => {
                 <motion.div
                   whileHover={{ x: 5 }}
                   whileTap={{ scale: 0.98 }}
-                  className="flex items-center gap-3 p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-all border border-gray-200"
+                  className="flex items-center gap-3 p-4 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-surface)] transition-all border border-[var(--border-subtle)]"
                 >
                   <div className={`w-12 h-12 bg-${action.color}-100 rounded-lg flex items-center justify-center`}>
                     <action.icon className={`w-6 h-6 text-${action.color}-600`} />
                   </div>
                   <div>
-                    <p className="font-semibold text-gray-900">{action.title}</p>
-                    <p className="text-sm text-gray-600">{action.desc}</p>
+                    <p className="font-semibold text-[var(--text-primary)]">{action.title}</p>
+                    <p className="text-sm text-[var(--text-secondary)]">{action.desc}</p>
                   </div>
                 </motion.div>
               </Link>
@@ -339,19 +338,19 @@ const FinancialDashboard = () => {
         </motion.div>
 
         {/* Recent Transactions */}
-        <motion.div 
+        <motion.div
           initial={{ opacity: 0, x: 20 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ delay: 0.4 }}
           className="lg:col-span-2 card"
         >
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-gray-900">Recent Transactions</h3>
+            <h3 className="text-xl font-bold text-[var(--text-primary)]">Recent Transactions</h3>
             <Link to="/transactions" className="text-sm text-blue-600 hover:text-blue-700 font-semibold">
               View all →
             </Link>
           </div>
-          
+
           {recentTransactions.length === 0 ? (
             <div className="text-center py-12">
               <div className="w-16 h-16 bg-gray-100 rounded-full flex items-center justify-center mx-auto mb-4">
@@ -379,9 +378,8 @@ const FinancialDashboard = () => {
                   className="flex items-center justify-between p-4 rounded-lg bg-gray-50 hover:bg-gray-100 transition-all"
                 >
                   <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${
-                      transaction.type === 'credit' ? 'bg-green-100' : 'bg-red-100'
-                    }`}>
+                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${transaction.type === 'credit' ? 'bg-green-100' : 'bg-red-100'
+                      }`}>
                       {transaction.type === 'credit' ? (
                         <TrendingUp className="w-5 h-5 text-green-600" />
                       ) : (
@@ -396,9 +394,8 @@ const FinancialDashboard = () => {
                       </p>
                     </div>
                   </div>
-                  <div className={`font-bold text-lg ${
-                    transaction.type === 'credit' ? 'text-green-600' : 'text-red-600'
-                  }`}>
+                  <div className={`font-bold text-lg ${transaction.type === 'credit' ? 'text-green-600' : 'text-red-600'
+                    }`}>
                     {transaction.type === 'credit' ? '+' : '-'}₹{transaction.amount.toLocaleString('en-IN')}
                   </div>
                 </motion.div>
@@ -409,7 +406,7 @@ const FinancialDashboard = () => {
       </div>
 
       {/* Features Section */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}

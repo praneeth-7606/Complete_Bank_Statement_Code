@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { chatAPI } from '../services/api'
 import RAGResponseFormatter from '../components/chat/RAGResponseFormatter'
+import { Button, Badge, Card } from '../components/ui'
 
 const InvestmentChat = () => {
     const [messages, setMessages] = useState([
@@ -84,15 +85,15 @@ const InvestmentChat = () => {
     }
 
     return (
-        <div className="h-[calc(100vh-6rem)] flex flex-col max-w-7xl mx-auto w-full px-2 sm:px-4 lg:px-6 py-4">
+        <div className="h-[calc(100vh-6rem)] flex flex-col w-full py-4">
             {/* Header - Emerald Theme */}
             <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
                 className="relative overflow-hidden rounded-2xl mb-6 shadow-2xl border border-emerald-500/20"
             >
-                <div className="absolute inset-0 bg-gradient-to-r from-emerald-600 via-green-600 to-teal-600"></div>
-                <div className="absolute inset-0 opacity-20 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-emerald-950/40 via-green-950/40 to-teal-950/40"></div>
+                <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
 
                 <div className="relative p-8 lg:p-10">
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-6 font-primary">
@@ -127,7 +128,7 @@ const InvestmentChat = () => {
             {/* Main Chat & Sidebar */}
             <div className="flex-1 flex gap-6 overflow-hidden">
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col bg-white/40 backdrop-blur-xl rounded-3xl border border-emerald-500/10 shadow-2xl overflow-hidden">
+                <div className="flex-1 flex flex-col bg-white/[0.02] backdrop-blur-xl rounded-3xl border border-white/5 shadow-2xl overflow-hidden">
                     <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
                         <AnimatePresence>
                             {messages.map((m, i) => (
@@ -147,14 +148,14 @@ const InvestmentChat = () => {
                                                 {m.content}
                                             </div>
                                         ) : (
-                                            <div className="bg-white/90 backdrop-blur-md rounded-2xl p-6 shadow-xl border border-emerald-100 min-w-[300px]">
+                                            <div className="bg-white/[0.03] backdrop-blur-md rounded-2xl p-6 shadow-xl border border-white/5 min-w-[300px]">
                                                 <RAGResponseFormatter
                                                     response={typeof m.content === 'string' ? { data: { answer: m.content } } : m.content}
                                                     loading={false}
                                                 />
                                             </div>
                                         )}
-                                        <span className="text-[10px] text-gray-400 mt-2 block px-2">
+                                        <span className="text-[10px] text-gray-500 mt-2 block px-2">
                                             {m.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                         </span>
                                     </div>
@@ -172,7 +173,7 @@ const InvestmentChat = () => {
                                     <button
                                         key={i}
                                         onClick={() => handleSuggestedQuestion(q.text)}
-                                        className="flex-shrink-0 flex items-center gap-2 px-4 py-3 bg-white border border-emerald-100 rounded-2xl hover:border-emerald-500 hover:shadow-lg transition-all text-sm font-semibold text-gray-700"
+                                        className="flex-shrink-0 flex items-center gap-2 px-4 py-3 bg-white/[0.03] border border-white/5 rounded-2xl hover:border-emerald-500/30 hover:bg-white/[0.06] transition-all text-sm font-semibold text-gray-400 hover:text-gray-200"
                                     >
                                         <div className={`w-8 h-8 rounded-lg bg-gradient-to-br ${q.color} flex items-center justify-center`}>
                                             <q.icon className="w-4 h-4 text-white" />
@@ -185,7 +186,7 @@ const InvestmentChat = () => {
                     )}
 
                     {/* Input Area */}
-                    <div className="p-6 bg-white border-t border-emerald-50">
+                    <div className="p-6 bg-transparent border-t border-white/5">
                         <form onSubmit={handleSubmit} className="flex gap-4">
                             <div className="flex-1 relative">
                                 <input
@@ -193,7 +194,7 @@ const InvestmentChat = () => {
                                     value={input}
                                     onChange={(e) => setInput(e.target.value)}
                                     placeholder="Ask about your stocks, portfolio or market..."
-                                    className="w-full px-6 py-4 bg-emerald-50/30 border-2 border-emerald-100 rounded-2xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all font-medium"
+                                    className="w-full px-6 py-4 bg-white/[0.03] border border-white/10 rounded-2xl focus:border-emerald-500 focus:ring-4 focus:ring-emerald-500/10 transition-all font-medium text-white placeholder-gray-500"
                                     disabled={loading}
                                 />
                             </div>
@@ -210,26 +211,26 @@ const InvestmentChat = () => {
 
                 {/* Desktop Sidebar Widget */}
                 <div className="hidden lg:flex w-80 flex-col gap-6">
-                    <div className="bg-white/80 backdrop-blur-xl rounded-3xl p-6 border border-emerald-100 shadow-xl">
-                        <h3 className="text-lg font-black text-gray-800 mb-4 flex items-center gap-2">
+                    <div className="bg-white/[0.03] backdrop-blur-xl rounded-3xl p-6 border border-white/5 shadow-xl">
+                        <h3 className="text-lg font-black text-white mb-4 flex items-center gap-2">
                             <TrendingUp className="w-5 h-5 text-emerald-600" /> Portfolio Health
                         </h3>
                         <div className="space-y-4">
-                            <div className="p-4 bg-emerald-50 rounded-2xl border border-emerald-100">
-                                <p className="text-xs text-emerald-600 font-bold uppercase tracking-wider">Total Value</p>
-                                <p className="text-2xl font-black text-emerald-900 mt-1">₹ --,---</p>
+                            <div className="p-4 bg-emerald-500/5 rounded-2xl border border-emerald-500/10">
+                                <p className="text-xs text-emerald-500 font-bold uppercase tracking-wider">Total Value</p>
+                                <p className="text-2xl font-black text-white mt-1">₹ --,---</p>
                             </div>
-                            <div className="p-4 bg-gray-50 rounded-2xl border border-gray-100">
+                            <div className="p-4 bg-white/5 rounded-2xl border border-white/5">
                                 <p className="text-xs text-gray-500 font-bold uppercase tracking-wider">Today's Gain</p>
-                                <p className="text-xl font-black text-emerald-600 mt-1">+₹ -.-%</p>
+                                <p className="text-xl font-black text-emerald-500 mt-1">+₹ -.-%</p>
                             </div>
                             <button className="w-full py-4 bg-emerald-600/10 hover:bg-emerald-600/20 text-emerald-700 rounded-2xl font-bold text-sm transition-all flex items-center justify-center gap-2">
                                 View Full Portfolio <ExternalLink className="w-4 h-4" />
                             </button>
                         </div>
                     </div>
-                    <div className="bg-gray-900 rounded-3xl p-6 text-white shadow-2xl relative overflow-hidden">
-                        <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/20 rounded-full blur-2xl"></div>
+                    <div className="bg-[#0f0f1a] rounded-3xl p-6 text-white shadow-2xl relative overflow-hidden border border-white/5">
+                        <div className="absolute -right-4 -top-4 w-24 h-24 bg-emerald-500/10 rounded-full blur-2xl"></div>
                         <h3 className="text-md font-bold mb-3 flex items-center gap-2">
                             <Sparkles className="w-4 h-4 text-emerald-500" /> Market Insights
                         </h3>

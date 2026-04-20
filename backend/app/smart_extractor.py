@@ -173,7 +173,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         # Initialize Gemini for Fallback
         if settings.GEMINI_API_KEY:
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            self.gemini_model = genai.GenerativeModel('gemini-3.1-flash-lite-preview')
+            self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
         else:
             logger.warning("GEMINI_API_KEY not set. Gemini Vision fallback will unavailable.")
             self.gemini_model = None

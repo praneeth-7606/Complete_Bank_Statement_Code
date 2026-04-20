@@ -3,6 +3,7 @@ import { Save, AlertCircle, CheckCircle, BookOpen } from 'lucide-react'
 import { motion } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { correctionAPI } from '../services/api'
+import { Button, Input, Card, Badge } from '../components/ui'
 
 const Corrections = () => {
   const [keyword, setKeyword] = useState('')

@@ -13,9 +13,12 @@ import {
   User,
   LogOut,
   Settings,
-  TrendingUp
+  TrendingUp,
+  Sun,
+  Moon
 } from 'lucide-react';
 import { useAuth } from '../../context/AuthContext';
+import { useTheme } from '../../context/ThemeContext';
 
 /**
  * Navbar Component
@@ -28,6 +31,7 @@ const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
+  const { theme, toggleTheme, isDark } = useTheme();
 
   // Handle scroll effect
   useEffect(() => {
@@ -62,7 +66,7 @@ const Navbar = () => {
   return (
     <motion.nav
       className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled
-        ? 'bg-white/90 backdrop-blur-lg shadow-lg'
+        ? 'bg-[var(--nav-bg)] backdrop-blur-lg border-b border-[var(--border-subtle)]'
         : 'bg-transparent'
         }`}
       initial={{ y: -100 }}
@@ -89,8 +93,8 @@ const Navbar = () => {
                     key={link.path}
                     to={link.path}
                     className={`relative px-4 py-2 rounded-lg transition-colors ${isActive(link.path)
-                      ? 'text-indigo-600'
-                      : 'text-gray-600 hover:text-indigo-600 hover:bg-indigo-50'
+                      ? 'text-indigo-400'
+                      : 'text-gray-400 hover:text-white hover:bg-white/5'
                       }`}
                   >
                     <div className="flex items-center space-x-2">
@@ -114,16 +118,25 @@ const Navbar = () => {
           <div className="flex items-center space-x-4">
             {user ? (
               <>
+                {/* Theme Toggle */}
+                <button
+                  onClick={toggleTheme}
+                  className="p-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                  title={`Switch to ${isDark ? 'Light' : 'Dark'} mode`}
+                >
+                  {isDark ? <Sun size={20} /> : <Moon size={20} />}
+                </button>
+
                 {/* Profile Dropdown */}
                 <div className="relative">
                   <button
                     onClick={() => setIsProfileOpen(!isProfileOpen)}
-                    className="flex items-center space-x-2 p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                    className="flex items-center space-x-2 p-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors"
                   >
                     <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
                       <User size={16} className="text-white" />
                     </div>
-                    <span className="hidden md:block text-sm font-medium text-gray-700">
+                    <span className="hidden md:block text-sm font-medium text-[var(--text-primary)]">
                       {user.email?.split('@')[0]}
                     </span>
                   </button>
@@ -134,21 +147,21 @@ const Navbar = () => {
                       initial={{ opacity: 0, scale: 0.95, y: -10 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
                       exit={{ opacity: 0, scale: 0.95, y: -10 }}
-                      className="absolute right-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-200 py-2"
+                      className="absolute right-0 mt-2 w-48 bg-[var(--bg-surface)] rounded-xl shadow-2xl border border-[var(--border-subtle)] py-2 scrollbar-hide"
                     >
-                      <div className="px-4 py-2 border-b border-gray-200">
-                        <p className="text-sm font-medium text-gray-900">{user.email}</p>
+                      <div className="px-4 py-2 border-b border-[var(--border-subtle)]">
+                        <p className="text-sm font-medium text-[var(--text-primary)]">{user.email}</p>
                       </div>
                       <button
                         onClick={() => navigate('/settings')}
-                        className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-gray-700 hover:bg-gray-100 transition-colors"
+                        className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-card)] transition-colors"
                       >
                         <Settings size={16} />
                         <span>Settings</span>
                       </button>
                       <button
                         onClick={handleLogout}
-                        className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-red-600 hover:bg-red-50 transition-colors"
+                        className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
                       >
                         <LogOut size={16} />
                         <span>Logout</span>
@@ -160,7 +173,7 @@ const Navbar = () => {
                 {/* Mobile Menu Button */}
                 <button
                   onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                  className="md:hidden p-2 rounded-lg hover:bg-gray-100 transition-colors"
+                  className="md:hidden p-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors text-[var(--text-primary)]"
                 >
                   {isMobileMenuOpen ? <X size={24} /> : <Menu size={24} />}
                 </button>
@@ -191,7 +204,7 @@ const Navbar = () => {
           initial={{ opacity: 0, height: 0 }}
           animate={{ opacity: 1, height: 'auto' }}
           exit={{ opacity: 0, height: 0 }}
-          className="md:hidden bg-white border-t border-gray-200"
+          className="md:hidden bg-[var(--bg-surface)] border-t border-[var(--border-subtle)]"
         >
           <div className="px-4 py-4 space-y-2">
             {navLinks.map((link) => {
@@ -202,8 +215,8 @@ const Navbar = () => {
                   to={link.path}
                   onClick={() => setIsMobileMenuOpen(false)}
                   className={`flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors ${isActive(link.path)
-                    ? 'bg-indigo-50 text-indigo-600'
-                    : 'text-gray-700 hover:bg-gray-100'
+                    ? 'bg-indigo-500/10 text-indigo-400'
+                    : 'text-[var(--text-secondary)] hover:bg-[var(--bg-card)]'
                     }`}
                 >
                   <Icon size={20} />

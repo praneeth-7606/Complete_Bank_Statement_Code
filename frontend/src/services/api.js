@@ -136,4 +136,15 @@ export const statementsAPI = {
   },
 };
 
+// NEW: Transactions API
+export const transactionsAPI = {
+  // Update transaction category
+  updateCategory: async (transactionId, newCategory) => {
+    const response = await api.put(`/api/transactions/${transactionId}/category`, {
+      new_category: newCategory
+    });
+    return response.data;
+  },
+};
+
 export default api;
