@@ -66,8 +66,8 @@ const TransactionRow = memo(({ txn, index, onUpdateCategory }) => {
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.025, duration: 0.3 }}
-      className="group border-b transition-colors"
-      style={{ borderColor: 'rgba(255,255,255,0.04)' }}
+      className="group border-b hover:bg-white/30 transition-colors"
+      style={{ borderColor: 'rgba(0,0,0,0.05)' }}
     >
       {/* Type icon */}
       <td className="py-3.5 pl-4 pr-2 w-10">
@@ -81,13 +81,13 @@ const TransactionRow = memo(({ txn, index, onUpdateCategory }) => {
 
       {/* Date */}
       <td className="py-3.5 px-3 whitespace-nowrap">
-        <span className="text-xs text-[var(--text-secondary)] font-medium">{txn.date || '—'}</span>
+        <span className="text-sm text-neutral-900 font-semibold">{txn.date || '—'}</span>
       </td>
 
       {/* Description */}
       <td className="py-3.5 px-3 max-w-[180px] sm:max-w-xs">
-        <p className="text-sm font-semibold text-[var(--text-primary)] truncate">{txn.description}</p>
-        {txn.reference && <p className="text-xs text-[var(--text-secondary)] truncate">{txn.reference}</p>}
+        <p className="text-sm font-semibold text-neutral-900 truncate">{txn.description}</p>
+        {txn.reference && <p className="text-xs text-neutral-500 truncate">{txn.reference}</p>}
       </td>
 
       {/* Category */}
@@ -272,27 +272,33 @@ const Transactions = () => {
   const totalExpenses = useMemo(() => transactions.reduce((s, t) => s + (parseFloat(t.debit) || 0), 0), [transactions])
 
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 relative">
+      {/* Subtle gradient background */}
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-50 via-blue-50/30 to-neutral-50"></div>
+        <div className="absolute top-20 right-20 w-96 h-96 bg-primary-200/20 rounded-full blur-3xl"></div>
+        <div className="absolute bottom-20 left-20 w-96 h-96 bg-blue-200/15 rounded-full blur-3xl"></div>
+      </div>
 
       {/* ── HEADER ── */}
       <motion.div
         initial={{ opacity: 0, y: -16 }}
         animate={{ opacity: 1, y: 0 }}
-        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4"
+        className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white/60 backdrop-blur-md rounded-2xl p-6 border border-white/40 shadow-lg"
       >
         <div>
-          <h1 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent">
+          <h1 className="text-2xl sm:text-3xl font-black bg-gradient-to-r from-neutral-900 to-neutral-600 bg-clip-text text-transparent">
             Transactions
           </h1>
-          <p className="text-xs text-gray-600 mt-0.5">
+          <p className="text-xs text-neutral-600 mt-0.5">
             {loading ? 'Loading…' : `${pagination.total} transactions total`}
           </p>
         </div>
         <button
           onClick={handleExport}
           disabled={!transactions.length}
-          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-          style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}
+          className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold text-white transition-all disabled:opacity-40 disabled:cursor-not-allowed hover:shadow-lg"
+          style={{ background: 'linear-gradient(135deg,#0ea5e9,#0284c7)' }}
         >
           <Download className="w-4 h-4" />
           Export CSV
@@ -308,9 +314,8 @@ const Transactions = () => {
             { label: 'Income', value: `₹${totalIncome.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, color: '#10b981' },
             { label: 'Expenses', value: `₹${totalExpenses.toLocaleString('en-IN', { maximumFractionDigits: 0 })}`, color: '#ef4444' }
           ].map((item, i) => (
-            <div key={i} className="flex items-center gap-2 px-3 py-1.5 rounded-xl"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
-              <span className="text-xs text-gray-500">{item.label}</span>
+            <div key={i} className="flex items-center gap-2 px-4 py-2 rounded-xl bg-white/50 backdrop-blur-sm border border-white/40 shadow-sm">
+              <span className="text-xs text-neutral-600 font-medium">{item.label}</span>
               <span className="text-sm font-bold" style={{ color: item.color }}>{item.value}</span>
             </div>
           ))}
@@ -323,29 +328,24 @@ const Transactions = () => {
 
         {/* Search */}
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none" />
           <input
             ref={searchRef}
             type="text"
             defaultValue={filters.search}
             onChange={e => handleSearchChange(e.target.value)}
             placeholder="Search transactions…"
-            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm text-gray-200 placeholder-gray-600 outline-none transition-all focus:ring-2"
-            style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.09)',
-              '--tw-ring-color': 'rgba(99,102,241,0.4)'
-            }}
+            className="w-full pl-9 pr-4 py-2.5 rounded-xl text-sm text-neutral-900 placeholder-neutral-500 outline-none transition-all focus:ring-2 focus:ring-primary-400 bg-white/60 backdrop-blur-sm border border-white/40"
           />
         </div>
 
         {/* Type toggle */}
-        <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}>
+        <div className="flex items-center gap-1 p-1 rounded-xl bg-white/50 backdrop-blur-sm border border-white/40">
           {['all', 'income', 'expense'].map(t => (
             <button key={t} onClick={() => handleTypeChange(t)}
               className="px-3 py-2 rounded-lg text-xs font-semibold capitalize transition-all"
               style={filters.type === t
-                ? { background: 'linear-gradient(135deg,#6366f1,#8b5cf6)', color: '#fff' }
+                ? { background: 'linear-gradient(135deg,#0ea5e9,#0284c7)', color: '#fff' }
                 : { color: '#6b7280' }}>
               {t}
             </button>
@@ -357,16 +357,15 @@ const Transactions = () => {
           onClick={() => setShowFilterPanel(v => !v)}
           className="flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-all"
           style={{
-            background: showFilterPanel ? 'rgba(99,102,241,0.15)' : 'rgba(255,255,255,0.04)',
-            border: showFilterPanel ? '1px solid rgba(99,102,241,0.4)' : '1px solid rgba(255,255,255,0.09)',
-            color: showFilterPanel ? '#a5b4fc' : '#6b7280'
+            background: showFilterPanel ? 'rgba(14,165,233,0.15)' : 'rgba(255,255,255,0.5)',
+            border: showFilterPanel ? '1px solid rgba(14,165,233,0.4)' : '1px solid rgba(255,255,255,0.4)',
+            color: showFilterPanel ? '#0ea5e9' : '#6b7280'
           }}
         >
           <SlidersHorizontal className="w-4 h-4" />
           Filters
           {filters.categories.length > 0 && (
-            <span className="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center"
-              style={{ background: '#6366f1', color: '#fff' }}>
+            <span className="w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center bg-primary-600 text-white">
               {filters.categories.length}
             </span>
           )}
@@ -383,12 +382,12 @@ const Transactions = () => {
             transition={{ duration: 0.25 }}
             className="overflow-hidden"
           >
-            <div className="rounded-2xl p-5" style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}>
+            <div className="rounded-2xl p-5 bg-white/50 backdrop-blur-sm border border-white/40">
               <div className="flex items-center justify-between mb-3">
-                <p className="text-xs font-bold text-gray-400 uppercase tracking-wide">Filter by Category</p>
+                <p className="text-xs font-bold text-neutral-700 uppercase tracking-wide">Filter by Category</p>
                 {filters.categories.length > 0 && (
                   <button
-                    className="text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+                    className="text-xs text-primary-600 hover:text-primary-700 transition-colors font-semibold"
                     onClick={() => {
                       const next = { ...filters, categories: [] }
                       setFilters(next)
@@ -404,10 +403,10 @@ const Transactions = () => {
                   const color = getCategoryColor(cat)
                   return (
                     <button key={cat} onClick={() => toggleCategory(cat)}
-                      className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all"
+                      className="px-3 py-1.5 rounded-full text-xs font-semibold transition-all hover:scale-105"
                       style={active
                         ? { background: `${color}25`, color, border: `1px solid ${color}50` }
-                        : { background: 'rgba(255,255,255,0.04)', color: '#6b7280', border: '1px solid rgba(255,255,255,0.08)' }}>
+                        : { background: 'rgba(255,255,255,0.6)', color: '#6b7280', border: '1px solid rgba(255,255,255,0.4)' }}>
                       {cat}
                     </button>
                   )
@@ -447,26 +446,26 @@ const Transactions = () => {
 
       {/* ── TABLE ── */}
       {loading ? (
-        <div className="flex items-center justify-center py-20">
+        <div className="flex items-center justify-center py-20 bg-white/40 backdrop-blur-sm rounded-2xl border border-white/40">
           <div className="text-center">
             <motion.div animate={{ rotate: 360 }} transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-              className="w-10 h-10 rounded-full border-2 border-indigo-500/20 border-t-indigo-500 mx-auto mb-3" />
-            <p className="text-gray-600 text-sm">Loading transactions…</p>
+              className="w-10 h-10 rounded-full border-2 border-primary-500/20 border-t-primary-500 mx-auto mb-3" />
+            <p className="text-neutral-600 text-sm">Loading transactions…</p>
           </div>
         </div>
       ) : error ? (
-        <div className="rounded-2xl p-8 text-center" style={{ background: 'rgba(239,68,68,0.05)', border: '1px solid rgba(239,68,68,0.15)' }}>
-          <p className="text-rose-400 mb-4">{error}</p>
-          <button onClick={() => fetchTransactions(1)} className="px-5 py-2 rounded-xl bg-rose-500/20 text-rose-300 text-sm font-semibold border border-rose-500/30">
+        <div className="rounded-2xl p-8 text-center bg-danger-50/50 backdrop-blur-sm border border-danger-200">
+          <p className="text-danger-600 mb-4 font-semibold">{error}</p>
+          <button onClick={() => fetchTransactions(1)} className="px-5 py-2 rounded-xl bg-danger-500/20 text-danger-600 text-sm font-semibold border border-danger-500/30 hover:bg-danger-500/30 transition-all">
             Retry
           </button>
         </div>
       ) : transactions.length === 0 ? (
-        <div className="rounded-2xl p-12 text-center" style={{ background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}>
-          <Filter className="w-10 h-10 text-gray-700 mx-auto mb-3" />
-          <p className="text-gray-500 text-sm">No transactions match your filters</p>
+        <div className="rounded-2xl p-12 text-center bg-white/40 backdrop-blur-sm border border-white/40">
+          <Filter className="w-10 h-10 text-neutral-400 mx-auto mb-3" />
+          <p className="text-neutral-600 text-sm">No transactions match your filters</p>
           {hasFilters && (
-            <button onClick={clearAll} className="mt-3 text-indigo-400 text-xs hover:text-indigo-300 transition-colors">Clear filters</button>
+            <button onClick={clearAll} className="mt-3 text-primary-600 text-xs hover:text-primary-700 transition-colors font-semibold">Clear filters</button>
           )}
         </div>
       ) : (
@@ -474,19 +473,18 @@ const Transactions = () => {
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           transition={{ delay: 0.1 }}
-          className="rounded-2xl overflow-hidden"
-          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="rounded-2xl overflow-hidden bg-white/60 backdrop-blur-md border border-white/40 shadow-lg"
         >
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+                <tr style={{ borderBottom: '1px solid rgba(0,0,0,0.06)' }}>
                   <th className="w-10 py-3 pl-4" />
                   <th className="py-3 px-3 text-left">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Date</span>
+                    <span className="text-xs font-bold text-neutral-600 uppercase tracking-wide">Date</span>
                   </th>
                   <th className="py-3 px-3 text-left">
-                    <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Description</span>
+                    <span className="text-xs font-bold text-neutral-600 uppercase tracking-wide">Description</span>
                   </th>
                   <th className="py-3 px-3 text-left hidden sm:table-cell">
                     <span className="text-xs font-bold text-gray-500 uppercase tracking-wide">Category</span>

@@ -8,7 +8,7 @@ import { pageTransition } from '../../utils/animations';
  */
 const ModernLayout = ({ children }) => {
   return (
-    <div className="min-h-screen bg-[var(--bg-main)] text-[var(--text-primary)] transition-colors duration-300">
+    <div className="min-h-screen text-[var(--text-primary)] transition-colors duration-300">
       {/* New Navbar */}
       <Navbar />
 

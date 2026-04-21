@@ -90,10 +90,13 @@ const InvestmentChat = () => {
             <motion.div
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="relative overflow-hidden rounded-2xl mb-6 shadow-2xl border border-emerald-500/20"
+                className="relative overflow-hidden rounded-2xl mb-6 shadow-2xl border-2 border-emerald-500/30"
             >
-                <div className="absolute inset-0 bg-gradient-to-r from-emerald-950/40 via-green-950/40 to-teal-950/40"></div>
-                <div className="absolute inset-0 opacity-10 bg-[url('https://www.transparenttextures.com/patterns/carbon-fibre.png')]"></div>
+                <div className="absolute inset-0 bg-gradient-to-r from-emerald-700 via-green-700 to-teal-700"></div>
+                <div className="absolute inset-0 opacity-10">
+                  <div className="absolute top-0 left-0 w-72 h-72 bg-white rounded-full filter blur-3xl animate-pulse"></div>
+                  <div className="absolute bottom-0 right-0 w-72 h-72 bg-white rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+                </div>
 
                 <div className="relative p-8 lg:p-10">
                     <div className="flex flex-col sm:flex-row items-center justify-between gap-6 font-primary">
@@ -101,23 +104,23 @@ const InvestmentChat = () => {
                             <motion.div
                                 animate={{ scale: [1, 1.1, 1] }}
                                 transition={{ duration: 4, repeat: Infinity }}
-                                className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-2xl rounded-3xl flex items-center justify-center shadow-2xl border border-white/40"
+                                className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-2xl rounded-3xl flex items-center justify-center shadow-2xl border-2 border-white/40"
                             >
                                 <TrendingUp className="w-10 h-10 text-white" />
                             </motion.div>
                             <div>
-                                <h2 className="text-3xl font-black text-white tracking-tighter flex items-center gap-3">
+                                <h2 className="text-3xl font-black text-white tracking-tighter flex items-center gap-3 drop-shadow-lg">
                                     Groww Assistant
-                                    <span className="text-xs bg-white/30 px-2 py-1 rounded-full font-bold">MCP POWERED</span>
+                                    <span className="text-xs bg-white px-2 py-1 rounded-full font-bold text-emerald-700">MCP POWERED</span>
                                 </h2>
-                                <div className="flex items-center gap-2 text-emerald-100 text-sm font-medium mt-1">
-                                    <ShieldCheck className="w-4 h-4 text-emerald-300" />
+                                <div className="flex items-center gap-2 text-white text-sm font-semibold mt-1">
+                                    <ShieldCheck className="w-4 h-4" />
                                     <span>Secure Brokerage API Connection</span>
                                 </div>
                             </div>
                         </div>
                         <div className="flex gap-4">
-                            <button onClick={clearChat} className="bg-white/10 hover:bg-white/20 px-4 py-2 rounded-xl text-white text-sm font-bold border border-white/20 transition-all flex items-center gap-2">
+                            <button onClick={clearChat} className="bg-white/20 hover:bg-white/30 px-4 py-2 rounded-xl text-white text-sm font-bold border-2 border-white/30 transition-all flex items-center gap-2 shadow-lg">
                                 <X className="w-4 h-4" /> Reset
                             </button>
                         </div>
@@ -128,7 +131,7 @@ const InvestmentChat = () => {
             {/* Main Chat & Sidebar */}
             <div className="flex-1 flex gap-6 overflow-hidden">
                 {/* Chat Area */}
-                <div className="flex-1 flex flex-col bg-white/[0.02] backdrop-blur-xl rounded-3xl border border-white/5 shadow-2xl overflow-hidden">
+                <div className="flex-1 flex flex-col bg-white/70 backdrop-blur-md rounded-3xl border border-white/40 shadow-2xl overflow-hidden">
                     <div className="flex-1 overflow-y-auto p-6 space-y-6 scrollbar-hide">
                         <AnimatePresence>
                             {messages.map((m, i) => (
@@ -138,7 +141,7 @@ const InvestmentChat = () => {
                                     animate={{ opacity: 1, x: 0 }}
                                     className={`flex gap-4 ${m.role === 'user' ? 'flex-row-reverse' : 'flex-row'}`}
                                 >
-                                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0 ${m.role === 'user' ? 'bg-emerald-600' : 'bg-gray-800'
+                                    <div className={`w-10 h-10 rounded-2xl flex items-center justify-center shadow-lg flex-shrink-0 ${m.role === 'user' ? 'bg-emerald-600' : 'bg-neutral-800'
                                         }`}>
                                         {m.role === 'user' ? <User className="w-6 h-6 text-white" /> : <Bot className="w-6 h-6 text-emerald-400" />}
                                     </div>

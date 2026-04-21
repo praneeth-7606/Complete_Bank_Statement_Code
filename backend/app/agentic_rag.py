@@ -7,8 +7,7 @@ Architecture:
   [2] HybridRetrieval      - parallel Mongo + Pinecone with per-source error isolation
   [3] SmartReRanker        - multi-signal scoring (keyword, recency, category, amount, semantic)
   [4] ContextBuilder       - rich financial context with trends, anomalies, peer stats
-  [5] ReasoningAgent       - LangChain tool-calling agent with 8 financial tools
-  [6] ResponseGenerator    - structured JSON with narrative, metrics, insights, transactions
+  [5] ResponseGenerator    - Direct fast LLM call generating structured JSON with context chunks
 """
 
 from __future__ import annotations
@@ -550,63 +549,7 @@ class ContextBuilder:
 # STEP 5: REASONING AGENT
 # ============================================================
 
-def _make_tools(context: FinancialContext):
-    raw = context.raw_docs
-    @tool
-    def search_transactions(keyword: str, limit: int = 50) -> str:
-        """Search transactions by keyword."""
-        kw = keyword.lower()
-        matches = [d for d in raw if kw in str(d.get("description", "")).lower() or kw in str(d.get("category", "")).lower()][:limit]
-        if not matches: return f"No transactions found matching '{keyword}'."
-        return "\n".join([f"- {m.get('date','')[:10]} | {m.get('category',''):20} | {m.get('description','')[:40]} | ₹{float(m.get('amount') or 0):,.2f}" for m in matches])
-
-    @tool
-    def compute_total(category: str = "", date_from: str = "", date_to: str = "") -> str:
-        """Compute total debit and credit for filters."""
-        f = [d for d in raw if (not category or d.get("category") == category) and (not date_from or d.get("date","") >= date_from) and (not date_to or d.get("date","") <= date_to)]
-        if not f: return "No transactions found."
-        td = sum(float(d.get("debit", 0) or 0) for d in f)
-        tc = sum(float(d.get("credit", 0) or 0) for d in f)
-        return f"Summary: {len(f)} txns | Debit: ₹{td:,.2f} | Credit: ₹{tc:,.2f}"
-
-    @tool
-    def category_summary() -> str:
-        """Get category breakdown."""
-        s = sorted(context.category_breakdown.items(), key=lambda x: x[1], reverse=True)
-        return "\n".join([f"- {c:25} ₹{a:>12,.2f}" for c, a in s])
-
-    return [search_transactions, compute_total, category_summary]
-
-REASONING_SYSTEM_PROMPT = """\
-You are a Senior Financial Analyst with access to {transaction_count} transactions.
-Total Debit: ₹{total_debit:,.2f} | Total Credit: ₹{total_credit:,.2f} | Range: {date_start} to {date_end}
-
-RULES:
-1. TRUST DATA — Never say "no data" if count > 0.
-2. USE TOOLS — Always call tools for precise math.
-3. BE SPECIFIC — Quote exact amounts in ₹1,23,456 format.
-"""
-
-class ReasoningAgent:
-    async def reason(self, query: str, context: FinancialContext, history: List[Dict] = None) -> str:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=settings.GEMINI_API_KEY)
-        tools = _make_tools(context)
-        prompt = ChatPromptTemplate.from_messages([("system", REASONING_SYSTEM_PROMPT), ("user", "{input}"), MessagesPlaceholder("agent_scratchpad")])
-        agent = create_tool_calling_agent(llm, tools, prompt)
-        executor = AgentExecutor(agent=agent, tools=tools, max_iterations=10, handle_parsing_errors=True, return_intermediate_steps=True)
-        try:
-            res = await executor.ainvoke({"input": query, "transaction_count": context.transaction_count, "total_debit": context.total_debit, "total_credit": context.total_credit, "date_start": context.date_range.get("start", ""), "date_end": context.date_range.get("end", "")})
-            output = res.get("output", "Analysis incomplete.")
-            
-            rag_logger.log_agent(
-                tool_calls=[step[0].tool for step in res.get("intermediate_steps", [])],
-                output=output,
-                hit_max_iterations=len(res.get("intermediate_steps", [])) >= 10
-            )
-            return output
-        except Exception as e:
-            rag_logger.log_error("REASONING_AGENT", e)
-            return f"Analysis of {context.transaction_count} transactions. Debit: ₹{context.total_debit:,.2f}."
+# (ReasoningAgent removed. Using single direct LLM call via ResponseGenerator instead)
 
 # ============================================================
 # STEP 6: RESPONSE GENERATOR
@@ -625,9 +568,12 @@ REQUIRED JSON FORMAT:
 """
 
 class ResponseGenerator:
-    async def generate(self, query: str, context: FinancialContext, agent_output: str, plan: QueryPlan) -> Dict:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.2, google_api_key=settings.GEMINI_API_KEY)
-        p = f"{RESPONSE_SYSTEM_PROMPT}\nQUERY: {query}\nANALYSIS: {agent_output}\nCONTEXT: {context.model_dump_json(exclude={'raw_docs'})}\nYOUR JSON RESPONSE:"
+    async def generate(self, query: str, context: FinancialContext, plan: QueryPlan) -> Dict:
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=settings.GEMINI_API_KEY)
+        
+        raw_txns = context.raw_docs[:200] # Safe token limit for Gemini 2.5 Flash
+        
+        p = f"{RESPONSE_SYSTEM_PROMPT}\n\nQUERY: {query}\nPRE-COMPUTED METRICS: {context.model_dump_json(exclude={'raw_docs'})}\nRAW TRANSACTIONS: {json.dumps(raw_txns, default=str)}\nYOUR JSON RESPONSE:"
         try:
             res = await llm.ainvoke(p)
             c = res.content.strip()
@@ -644,11 +590,12 @@ class ResponseGenerator:
             return final_json
         except Exception as e:
             rag_logger.log_error("RESPONSE_GENERATOR", e)
-            fallback = {"answer": agent_output, "transactions": context.top_transactions[:10]}
+            fallback_ans = f"Direct LLM response failed. Analyzed {context.transaction_count} transactions."
+            fallback = {"answer": fallback_ans, "transactions": context.top_transactions[:10]}
             rag_logger.log_response_gen(
                 json_parse_success=False,
                 fallback_used=True,
-                answer=agent_output,
+                answer=fallback_ans,
                 metrics=[],
                 insights=[],
                 transactions=context.top_transactions[:10]
@@ -666,7 +613,6 @@ class AgenticRAGPipeline:
         self.retriever = HybridRetrievalLayer(self._mongo_client)
         self.reranker = SmartReRanker()
         self.context_builder = ContextBuilder()
-        self.reasoner = ReasoningAgent()
         self.generator = ResponseGenerator()
 
     async def run(self, user_query: str, user_id: str, chat_history: List[Dict[str, str]] = None) -> Dict[str, Any]:
@@ -689,13 +635,12 @@ class AgenticRAGPipeline:
         rag_logger.log_context_validation(is_valid_ctx, ctx_err)
         if not is_valid_ctx: return {"answer": ctx_err, "transactions": []}
         
-        agent_out = await self.reasoner.reason(user_query, context, chat_history)
-        final = await self.generator.generate(user_query, context, agent_out, plan)
+        final = await self.generator.generate(user_query, context, plan)
         
         rag_logger.log_pipeline_complete(
             txn_count=context.transaction_count,
             answer_length=len(final.get("answer", "")),
-            steps_completed=6
+            steps_completed=5
         )
         return final
 

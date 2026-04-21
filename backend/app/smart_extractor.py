@@ -97,7 +97,119 @@ class MistralOCRExtractor:
         second LLM call.
     """
 
-    # JSON schema we instruct Mistral to fill per page / document
+    # ============================================================
+    # SPECIALIZED SCHEMAS FOR DIFFERENT DOCUMENT TYPES
+    # ============================================================
+    
+    # Schema for Credit Card Bills
+    CREDIT_CARD_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "document_type": {"type": "string", "enum": ["credit_card_bill"]},
+            "card_details": {
+                "type": "object",
+                "properties": {
+                    "card_number_last4": {"type": "string", "description": "Last 4 digits of card number"},
+                    "credit_limit": {"type": "number", "description": "Total credit limit"},
+                    "available_credit": {"type": "number", "description": "Available credit"},
+                    "statement_date": {"type": "string", "description": "Statement generation date"},
+                    "due_date": {"type": "string", "description": "Payment due date"},
+                    "minimum_due": {"type": "number", "description": "Minimum amount due"},
+                    "total_due": {"type": "number", "description": "Total outstanding amount"}
+                }
+            },
+            "transactions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "date": {"type": "string"},
+                        "description": {"type": "string", "description": "Merchant name and transaction details"},
+                        "debit": {"type": "number", "description": "Amount charged (purchases, fees, interest)"},
+                        "credit": {"type": "number", "description": "Payments, refunds, cashback"},
+                        "balance": {"type": "number"}
+                    },
+                    "required": ["date", "description", "debit", "credit", "balance"]
+                }
+            }
+        },
+        "required": ["document_type", "card_details", "transactions"]
+    }
+
+    # Schema for Loan Statements
+    LOAN_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "document_type": {"type": "string", "enum": ["loan_statement"]},
+            "loan_details": {
+                "type": "object",
+                "properties": {
+                    "loan_account_number": {"type": "string"},
+                    "loan_type": {"type": "string", "description": "Home Loan, Personal Loan, Auto Loan, etc."},
+                    "principal_amount": {"type": "number", "description": "Original loan amount"},
+                    "outstanding_principal": {"type": "number", "description": "Remaining principal"},
+                    "interest_rate": {"type": "number", "description": "Annual interest rate percentage"},
+                    "tenure_months": {"type": "number", "description": "Total loan tenure in months"},
+                    "emi_amount": {"type": "number", "description": "Monthly EMI amount"},
+                    "next_due_date": {"type": "string"}
+                }
+            },
+            "transactions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "date": {"type": "string"},
+                        "description": {"type": "string", "description": "EMI payment, principal, interest breakdown"},
+                        "principal_paid": {"type": "number", "description": "Principal component of EMI"},
+                        "interest_paid": {"type": "number", "description": "Interest component of EMI"},
+                        "debit": {"type": "number", "description": "Total EMI deducted"},
+                        "credit": {"type": "number", "description": "Prepayments or refunds"},
+                        "balance": {"type": "number", "description": "Outstanding principal after payment"}
+                    },
+                    "required": ["date", "description", "debit", "credit", "balance"]
+                }
+            }
+        },
+        "required": ["document_type", "loan_details", "transactions"]
+    }
+
+    # Schema for EMI/Installment Statements
+    EMI_SCHEMA = {
+        "type": "object",
+        "properties": {
+            "document_type": {"type": "string", "enum": ["emi_statement"]},
+            "emi_details": {
+                "type": "object",
+                "properties": {
+                    "product_name": {"type": "string", "description": "Product purchased on EMI"},
+                    "total_amount": {"type": "number", "description": "Total product cost"},
+                    "down_payment": {"type": "number", "description": "Initial down payment"},
+                    "emi_amount": {"type": "number", "description": "Monthly installment amount"},
+                    "tenure_months": {"type": "number", "description": "Total EMI tenure"},
+                    "interest_rate": {"type": "number", "description": "Interest rate if applicable"},
+                    "outstanding_amount": {"type": "number"}
+                }
+            },
+            "transactions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "date": {"type": "string"},
+                        "description": {"type": "string", "description": "EMI installment number and details"},
+                        "debit": {"type": "number", "description": "EMI amount paid"},
+                        "credit": {"type": "number", "description": "Refunds or adjustments"},
+                        "balance": {"type": "number", "description": "Remaining amount to be paid"}
+                    },
+                    "required": ["date", "description", "debit", "credit", "balance"]
+                }
+            }
+        },
+        "required": ["document_type", "emi_details", "transactions"]
+    }
+
+    # JSON schema we instruct Mistral to fill per page / document (BANK STATEMENTS - DEFAULT)
     TRANSACTION_SCHEMA = {
         "type": "object",
         "properties": {
@@ -127,6 +239,53 @@ class MistralOCRExtractor:
         "additionalProperties": False
     }
 
+    # ============================================================
+    # SPECIALIZED PROMPTS FOR DIFFERENT DOCUMENT TYPES
+    # ============================================================
+    
+    CREDIT_CARD_PROMPT = """You are an expert Credit Card Statement analyzer.
+Extract ALL transactions from this credit card bill with 100% accuracy.
+
+CRITICAL INSTRUCTIONS:
+1. CARD DETAILS: Extract card number (last 4 digits), credit limit, available credit, statement date, due date, minimum due, and total due from the summary section.
+2. TRANSACTION TYPES: Identify purchases, cash advances, fees, interest charges, payments, and refunds.
+3. MERCHANT DETAILS: Capture full merchant names and transaction descriptions.
+4. DEBIT = Charges (purchases, fees, interest). CREDIT = Payments, refunds, cashback.
+5. INTERNATIONAL TRANSACTIONS: Note currency conversions if present.
+6. EXHAUSTIVE: Extract every single transaction from all pages.
+7. BALANCE: Running balance after each transaction.
+
+Return ONLY valid JSON matching the credit_card_bill schema. No markdown."""
+
+    LOAN_PROMPT = """You are an expert Loan Statement analyzer.
+Extract ALL loan payment details with complete accuracy.
+
+CRITICAL INSTRUCTIONS:
+1. LOAN DETAILS: Extract loan account number, loan type (Home/Personal/Auto), principal amount, outstanding principal, interest rate, tenure, EMI amount, next due date.
+2. EMI BREAKDOWN: For each payment, extract principal component and interest component separately.
+3. PREPAYMENTS: Identify any prepayments or part-payments separately from regular EMIs.
+4. DEBIT = EMI payments, processing fees. CREDIT = Refunds, interest rebates.
+5. BALANCE = Outstanding principal after each payment.
+6. EXHAUSTIVE: Extract every payment record from all pages.
+7. DATES: Capture exact payment dates and due dates.
+
+Return ONLY valid JSON matching the loan_statement schema. No markdown."""
+
+    EMI_PROMPT = """You are an expert EMI/Installment Statement analyzer.
+Extract ALL EMI payment records with complete accuracy.
+
+CRITICAL INSTRUCTIONS:
+1. EMI DETAILS: Extract product name, total cost, down payment, EMI amount, tenure, interest rate, outstanding amount.
+2. INSTALLMENT TRACKING: Number each EMI payment (EMI 1/12, EMI 2/12, etc.).
+3. PAYMENT STATUS: Mark each installment as paid/pending/overdue if indicated.
+4. DEBIT = EMI installments paid, late fees. CREDIT = Refunds, cancellations.
+5. BALANCE = Remaining amount to be paid after each installment.
+6. EXHAUSTIVE: Extract every installment record from all pages.
+7. ZERO-COST EMI: If zero-cost EMI, note interest rate as 0%.
+
+Return ONLY valid JSON matching the emi_statement schema. No markdown."""
+
+    # Default prompt for Bank Statements
     EXTRACTION_PROMPT = """You are an elite, infallible financial document parser.
 Analyze this document. First, classify its overall `document_type`.
 Then, extract EVERY SINGLE transaction line by line without missing a single one.
@@ -305,18 +464,30 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 logger.info(f"      -> Processing all {len(doc)} pages together for context preservation.")
                 doc.close()
 
-                # Dispatch single call for the entire document
-                # This ensures Mistral sees the headers on Page 1 and applies them to later pages.
-                res = await asyncio.to_thread(
-                    self._ocr_pdf_with_mistral, 
-                    state["file_bytes"], 
-                    state["file_path"]
-                )
+                # ROUTING LOGIC: Use specialized extraction for non-bank statements
+                doc_type = state.get("document_type", "bank_statement")
+                
+                if doc_type in ["credit_card_bill", "loan_statement", "emi_statement"]:
+                    logger.info(f"   [ROUTER] Detected {doc_type} - Using SPECIALIZED extraction agent")
+                    res = await asyncio.to_thread(
+                        self._ocr_pdf_with_mistral_specialized,
+                        state["file_bytes"],
+                        state["file_path"],
+                        doc_type
+                    )
+                    state["extraction_method"] = f"MISTRAL_OCR_3_SPECIALIZED_{doc_type.upper()}"
+                else:
+                    logger.info(f"   [ROUTER] Detected {doc_type} - Using STANDARD bank statement extraction")
+                    res = await asyncio.to_thread(
+                        self._ocr_pdf_with_mistral, 
+                        state["file_bytes"], 
+                        state["file_path"]
+                    )
+                    state["extraction_method"] = "MISTRAL_OCR_3_SEQUENTIAL"
                 
                 doc_type, txns = res
                 if txns:
                     state["raw_ocr_output"] = {"transactions": txns}
-                    state["extraction_method"] = "MISTRAL_OCR_3_SEQUENTIAL"
                     if not state["document_type"]:
                         state["document_type"] = doc_type
                     logger.info(f"   [SUCCESS] Extraction returned {len(txns)} transactions across all pages.")
@@ -846,6 +1017,117 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             logger.warning(f"Could not decrypt PDF: {e}. Sending as-is.")
             return pdf_bytes
 
+    def _ocr_pdf_with_mistral_specialized(self, pdf_bytes: bytes, filename: str, document_type: str) -> Tuple[str, List[Dict]]:
+        """
+        SPECIALIZED EXTRACTION AGENT: Routes to type-specific Mistral OCR prompts.
+        
+        This method is called ONLY for non-bank-statement documents (credit cards, loans, EMIs).
+        It uses specialized JSON schemas and prompts optimized for each document type.
+        
+        Args:
+            pdf_bytes: PDF file bytes
+            filename: Original filename
+            document_type: One of: credit_card_bill, loan_statement, emi_statement
+            
+        Returns:
+            (document_type, transactions_with_metadata)
+        """
+        logger.info(f"[SPECIALIZED] Using type-specific extraction for: {document_type}")
+        
+        # Select schema and prompt based on document type
+        schema_map = {
+            "credit_card_bill": (self.CREDIT_CARD_SCHEMA, self.CREDIT_CARD_PROMPT, "CreditCardBill"),
+            "loan_statement": (self.LOAN_SCHEMA, self.LOAN_PROMPT, "LoanStatement"),
+            "emi_statement": (self.EMI_SCHEMA, self.EMI_PROMPT, "EMIStatement")
+        }
+        
+        if document_type not in schema_map:
+            logger.warning(f"Unknown document type: {document_type}. Falling back to generic extraction.")
+            return self._ocr_pdf_with_mistral(pdf_bytes, filename)
+        
+        schema, prompt, schema_name = schema_map[document_type]
+        
+        # Encode PDF as base64
+        b64_pdf = base64.standard_b64encode(pdf_bytes).decode("utf-8")
+        document_data_uri = f"data:application/pdf;base64,{b64_pdf}"
+        
+        logger.info(f"   Using {schema_name} schema with specialized prompt")
+        logger.info(f"   PDF size: {len(pdf_bytes) / 1024:.1f} KB")
+        
+        # Build annotation format with specialized schema
+        annotation_format = {
+            "type": "json_schema",
+            "json_schema": {
+                "name": schema_name,
+                "schema": schema,
+                "strict": True,
+            },
+        }
+        
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
+            try:
+                logger.info(f"   [ATTEMPT] {attempt}/{max_retries} - Specialized extraction...")
+                
+                ocr_response = self.client.ocr.process(
+                    model="mistral-ocr-latest",
+                    document={
+                        "type": "document_url",
+                        "document_url": document_data_uri,
+                    },
+                    document_annotation_format=annotation_format,
+                    document_annotation_prompt=prompt,
+                    include_image_base64=False,
+                )
+                
+                logger.info("   [OK] Specialized extraction successful")
+                
+                # Parse response
+                if hasattr(ocr_response, "document_annotation") and ocr_response.document_annotation:
+                    ann = ocr_response.document_annotation
+                    data = ann if isinstance(ann, dict) else json.loads(ann)
+                    
+                    # Extract metadata and transactions
+                    transactions = data.get("transactions", [])
+                    
+                    # Enrich transactions with document-specific metadata
+                    if document_type == "credit_card_bill" and "card_details" in data:
+                        card_details = data["card_details"]
+                        for txn in transactions:
+                            txn["card_last4"] = card_details.get("card_number_last4")
+                            txn["statement_date"] = card_details.get("statement_date")
+                            txn["document_metadata"] = card_details
+                    
+                    elif document_type == "loan_statement" and "loan_details" in data:
+                        loan_details = data["loan_details"]
+                        for txn in transactions:
+                            txn["loan_account"] = loan_details.get("loan_account_number")
+                            txn["loan_type"] = loan_details.get("loan_type")
+                            txn["emi_amount"] = loan_details.get("emi_amount")
+                            txn["document_metadata"] = loan_details
+                    
+                    elif document_type == "emi_statement" and "emi_details" in data:
+                        emi_details = data["emi_details"]
+                        for txn in transactions:
+                            txn["product_name"] = emi_details.get("product_name")
+                            txn["emi_amount"] = emi_details.get("emi_amount")
+                            txn["tenure_months"] = emi_details.get("tenure_months")
+                            txn["document_metadata"] = emi_details
+                    
+                    logger.info(f"   [SUCCESS] Extracted {len(transactions)} transactions with metadata")
+                    return (document_type, transactions)
+                
+                else:
+                    logger.warning("   [WARN] No structured annotation in response")
+                    
+            except Exception as e:
+                logger.error(f"   [ERROR] Attempt {attempt} failed: {e}")
+                if attempt == max_retries:
+                    raise
+                time.sleep(2 ** attempt)  # Exponential backoff
+        
+        return (document_type, [])
+
     def _ocr_pdf_with_mistral(self, pdf_bytes: bytes, filename: str) -> Tuple[str, List[Dict]]:
         """
         Send the PDF to Mistral OCR 3 using the dedicated OCR API (v2 SDK).
@@ -862,7 +1144,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             f"Base64 size: {len(b64_pdf) / 1024:.1f} KB"
         )
 
-        # JSON schema for structured output
+        # JSON schema for structured output (default: bank statement)
         annotation_format = {
             "type": "json_schema",
             "json_schema": {

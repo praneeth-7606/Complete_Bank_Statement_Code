@@ -150,13 +150,13 @@ const Chat = () => {
       <motion.div
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-xl sm:rounded-2xl mb-4 sm:mb-6 shadow-lg sm:shadow-2xl"
+        className="relative overflow-hidden rounded-xl sm:rounded-2xl mb-4 sm:mb-6 shadow-2xl"
       >
-        {/* Animated Background */}
-        <div className="absolute inset-0 bg-gradient-to-r from-indigo-900/40 via-purple-900/40 to-pink-900/40"></div>
-        <div className="absolute inset-0 opacity-20">
-          <div className="absolute top-0 left-0 w-40 h-40 sm:w-72 sm:h-72 bg-indigo-500 rounded-full filter blur-3xl animate-pulse"></div>
-          <div className="absolute bottom-0 right-0 w-40 h-40 sm:w-72 sm:h-72 bg-purple-500 rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
+        {/* Animated Background - Darker for better contrast */}
+        <div className="absolute inset-0 bg-gradient-to-r from-primary-700 via-primary-800 to-primary-900"></div>
+        <div className="absolute inset-0 opacity-10">
+          <div className="absolute top-0 left-0 w-40 h-40 sm:w-72 sm:h-72 bg-white rounded-full filter blur-3xl animate-pulse"></div>
+          <div className="absolute bottom-0 right-0 w-40 h-40 sm:w-72 sm:h-72 bg-white rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
         </div>
 
         {/* Content */}
@@ -166,12 +166,12 @@ const Chat = () => {
               <motion.div
                 animate={{ rotate: [0, 360] }}
                 transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-xl rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-2xl border border-white/40 flex-shrink-0"
+                className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-xl rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-2xl border-2 border-white/40 flex-shrink-0"
               >
                 <Sparkles className="w-8 h-8 sm:w-10 sm:h-10 text-white" />
               </motion.div>
               <div className="min-w-0">
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white mb-1 sm:mb-2 flex items-center gap-3 flex-wrap tracking-tight">
+                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white mb-1 sm:mb-2 flex items-center gap-3 flex-wrap tracking-tight drop-shadow-lg">
                   Financial Intelligence
                   <motion.span
                     animate={{ scale: [1, 1.2, 1], rotate: [0, 10, -10, 0] }}
@@ -180,9 +180,9 @@ const Chat = () => {
                     💎
                   </motion.span>
                 </h2>
-                <div className="flex items-center gap-3 text-white/90 text-sm sm:text-base font-medium">
+                <div className="flex items-center gap-3 text-white text-sm sm:text-base font-semibold">
                   <span className="flex items-center gap-1.5"><Brain className="w-4 h-4" /> Agentic RAG v2.0</span>
-                  <span className="w-1.5 h-1.5 bg-white/40 rounded-full"></span>
+                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
                   <span>Long-term Memory Enabled</span>
                 </div>
               </div>
@@ -190,12 +190,12 @@ const Chat = () => {
             <div className="flex items-center gap-3">
               <button
                 onClick={clearChat}
-                className="flex items-center gap-2 bg-white/10 hover:bg-white/20 backdrop-blur-lg px-4 py-2 rounded-xl border border-white/20 transition-all text-white text-sm font-medium"
+                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 backdrop-blur-lg px-4 py-2 rounded-xl border-2 border-white/30 transition-all text-white text-sm font-semibold shadow-lg"
               >
                 <X className="w-4 h-4" /> Clear Session
               </button>
-              <div className="hidden sm:flex items-center gap-2 bg-white/30 backdrop-blur-xl px-4 py-2 rounded-full border border-white/40 shadow-xl">
-                <div className="w-2.5 h-2.5 bg-green-400 rounded-full animate-pulse shadow-[0_0_10px_rgba(74,222,128,0.6)]"></div>
+              <div className="hidden sm:flex items-center gap-2 bg-green-500 backdrop-blur-xl px-4 py-2 rounded-full border-2 border-green-400 shadow-xl">
+                <div className="w-2.5 h-2.5 bg-white rounded-full animate-pulse shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
                 <span className="text-white text-sm font-bold tracking-wide">AI ALIVE</span>
               </div>
             </div>
@@ -204,7 +204,7 @@ const Chat = () => {
       </motion.div>
 
       {/* Messages Container - Enhanced */}
-      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl bg-[var(--bg-surface)] border border-[var(--border-subtle)] shadow-2xl">
+      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl bg-white/70 backdrop-blur-md border border-white/40 shadow-2xl">
         {/* Messages Area */}
         <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
           <AnimatePresence>

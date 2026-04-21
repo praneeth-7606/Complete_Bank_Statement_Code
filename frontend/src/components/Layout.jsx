@@ -38,7 +38,15 @@ const Layout = ({ children }) => {
   const isActive = (path) => location.pathname === path
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-neutral-50 via-primary-50/30 to-neutral-50">
+    <div className="min-h-screen relative">
+      {/* Subtle animated mesh gradient background */}
+      <div className="fixed inset-0 -z-10">
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-50 via-blue-50/30 to-neutral-50"></div>
+        <div className="absolute top-0 left-0 w-[500px] h-[500px] bg-primary-200/20 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '8s' }}></div>
+        <div className="absolute bottom-0 right-0 w-[600px] h-[600px] bg-blue-200/15 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '10s', animationDelay: '2s' }}></div>
+        <div className="absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-primary-100/10 rounded-full blur-3xl animate-pulse" style={{ animationDuration: '12s', animationDelay: '4s' }}></div>
+      </div>
+
       {/* Mobile sidebar backdrop */}
       {sidebarOpen && (
         <div 
@@ -168,7 +176,7 @@ const Layout = ({ children }) => {
         </header>
 
         {/* Page content - PROPERLY CENTERED */}
-        <main className="p-4 lg:p-8">
+        <main className="p-4 lg:p-8 min-h-screen">
           <div className="max-w-7xl mx-auto">
             {children}
           </div>

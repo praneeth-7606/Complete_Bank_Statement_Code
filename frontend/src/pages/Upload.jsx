@@ -408,9 +408,9 @@ const Upload = () => {
           <motion.div
             initial={{ opacity: 0, y: -20 }}
             animate={{ opacity: 1, y: 0 }}
-            className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-primary-600 via-primary-700 to-primary-800 p-8 border border-primary-500/20 shadow-xl"
+            className="relative overflow-hidden rounded-3xl bg-gradient-to-r from-primary-600 via-primary-700 to-primary-800 p-8 border border-primary-500/20 shadow-2xl"
           >
-            <div className="absolute inset-0 opacity-20">
+            <div className="absolute inset-0 opacity-10">
               <div className="absolute top-0 right-0 w-64 h-64 bg-white rounded-full mix-blend-overlay filter blur-3xl animate-pulse"></div>
             </div>
             <div className="relative flex items-center justify-between">
@@ -419,15 +419,15 @@ const Upload = () => {
                   <UploadIcon className="w-10 h-10" />
                   Upload Statements
                 </h1>
-                <p className="text-white/90 text-lg">Upload single or multiple bank statements here</p>
+                <p className="text-white/95 text-lg font-medium">Upload single or multiple bank statements here</p>
               </div>
               <motion.button
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={toggleNotifications}
-                className={`hidden md:flex items-center gap-2 px-6 py-3 rounded-xl font-semibold border transition-all ${notificationsEnabled
-                  ? 'bg-green-500/20 border-green-400 text-green-100 hover:bg-green-500/30'
-                  : 'bg-white/20 border-white/30 text-white hover:bg-white/30'
+                className={`hidden md:flex items-center gap-2 px-6 py-3 rounded-xl font-semibold border-2 transition-all shadow-lg ${notificationsEnabled
+                  ? 'bg-green-500 border-green-400 text-white hover:bg-green-600'
+                  : 'bg-white border-white text-primary-700 hover:bg-neutral-50'
                   }`}
               >
                 {notificationsEnabled ? (
@@ -459,12 +459,12 @@ const Upload = () => {
                 onDragOver={handleDrag}
                 onDrop={handleDrop}
                 whileHover={{ scale: 1.01 }}
-                className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all ${dragActive
-                  ? 'border-primary-500 bg-primary-50 shadow-xl'
-                  : 'border-neutral-300 bg-white hover:border-primary-400 hover:bg-neutral-50'
+                className={`relative overflow-hidden rounded-3xl border-2 border-dashed transition-all shadow-lg ${dragActive
+                  ? 'border-primary-500 bg-primary-50 shadow-2xl'
+                  : 'border-neutral-300 bg-white/80 backdrop-blur-sm hover:border-primary-400 hover:bg-white'
                   }`}
               >
-                <div className="absolute inset-0 bg-gradient-to-br from-primary-50/50 to-transparent"></div>
+                <div className="absolute inset-0 bg-gradient-to-br from-primary-50/30 to-transparent"></div>
                 <div className="relative p-12 text-center">
                   <input
                     type="file"
@@ -516,8 +516,8 @@ const Upload = () => {
                     className="space-y-4"
                   >
                     <div className="flex items-center justify-between">
-                      <h3 className="text-lg font-bold text-white">Selected Files ({files.length})</h3>
-                      <span className="text-sm text-gray-400">
+                      <h3 className="text-lg font-bold text-neutral-900">Selected Files ({files.length})</h3>
+                      <span className="text-sm text-neutral-600 font-medium">
                         {(files.reduce((sum, f) => sum + f.size, 0) / 1024 / 1024).toFixed(2)} MB total
                       </span>
                     </div>
@@ -530,22 +530,22 @@ const Upload = () => {
                           animate={{ opacity: 1, x: 0 }}
                           transition={{ delay: index * 0.05 }}
                           whileHover={{ x: 5 }}
-                          className="group relative overflow-hidden rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] p-4 shadow-xl hover:shadow-2xl transition-all"
+                          className="group relative overflow-hidden rounded-2xl bg-white/90 backdrop-blur-sm border border-neutral-200 p-4 shadow-lg hover:shadow-xl transition-all"
                         >
-                          <div className="absolute inset-0 bg-gradient-to-r from-[var(--accent-primary)]/0 to-[var(--accent-secondary)]/0 group-hover:from-[var(--accent-primary)]/5 group-hover:to-[var(--accent-secondary)]/5 transition-all"></div>
+                          <div className="absolute inset-0 bg-gradient-to-r from-primary-50/0 to-primary-100/0 group-hover:from-primary-50/50 group-hover:to-primary-100/50 transition-all"></div>
                           <div className="relative flex items-center gap-4">
-                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-[var(--accent-primary)] to-[var(--accent-secondary)] flex items-center justify-center flex-shrink-0 shadow-lg">
+                            <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-primary-500 to-primary-600 flex items-center justify-center flex-shrink-0 shadow-lg">
                               <FileText className="w-6 h-6 text-white" />
                             </div>
                             <div className="flex-1 min-w-0">
-                              <p className="font-semibold text-[var(--text-primary)] truncate">{file.name}</p>
-                              <p className="text-sm text-[var(--text-secondary)]">
+                              <p className="font-semibold text-neutral-900 truncate">{file.name}</p>
+                              <p className="text-sm text-neutral-600 font-medium">
                                 {(file.size / 1024).toFixed(2)} KB
                               </p>
                             </div>
                             <div className="flex items-center gap-3 flex-shrink-0">
                               <div className="relative">
-                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-secondary)]" />
+                                <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
                                 <input
                                   type="password"
                                   placeholder="Password (if needed)"
@@ -615,25 +615,26 @@ const Upload = () => {
                 transition={{ delay: 0.3 }}
                 className="grid md:grid-cols-3 gap-4"
               >
-                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] p-6">
-                  <div className="w-12 h-12 rounded-xl bg-blue-500/10 flex items-center justify-center mb-4">
-                    <Zap className="w-6 h-6 text-blue-400" />
+                <div className="rounded-2xl bg-white/90 backdrop-blur-sm border border-neutral-200 p-6 shadow-lg">
+                  <div className="w-12 h-12 rounded-xl bg-blue-100 flex items-center justify-center mb-4">
+                    <Zap className="w-6 h-6 text-blue-600" />
                   </div>
-                  <h4 className="font-bold text-[var(--text-primary)] mb-2">Fast Processing</h4>
-                  <p className="text-sm text-[var(--text-secondary)]">Process statements in under 2 seconds with AI-powered extraction</p>
+                  <h4 className="font-bold text-neutral-900 mb-2">Fast Processing</h4>
+                  <p className="text-sm text-neutral-600 font-medium">Process statements in under 2 seconds with AI-powered extraction</p>
                 </div>
-                <div className="rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] p-6">
-                  <div className="w-12 h-12 rounded-xl bg-purple-500/10 flex items-center justify-center mb-4">
-                    <Database className="w-6 h-6 text-purple-400" />
+                <div className="rounded-2xl bg-white/90 backdrop-blur-sm border border-neutral-200 p-6 shadow-lg">
+                  <div className="w-12 h-12 rounded-xl bg-purple-100 flex items-center justify-center mb-4">
+                    <Database className="w-6 h-6 text-purple-600" />
                   </div>
-                  <p className="text-sm text-gray-400">Bank-level encryption for all your financial data</p>
+                  <h4 className="font-bold text-neutral-900 mb-2">Secure Storage</h4>
+                  <p className="text-sm text-neutral-600 font-medium">Bank-level encryption for all your financial data</p>
                 </div>
-                <div className="rounded-2xl bg-white/[0.02] border border-white/5 p-6">
-                  <div className="w-12 h-12 rounded-xl bg-green-500/10 flex items-center justify-center mb-4">
-                    <CheckCircle className="w-6 h-6 text-green-400" />
+                <div className="rounded-2xl bg-white/90 backdrop-blur-sm border border-neutral-200 p-6 shadow-lg">
+                  <div className="w-12 h-12 rounded-xl bg-green-100 flex items-center justify-center mb-4">
+                    <CheckCircle className="w-6 h-6 text-green-600" />
                   </div>
-                  <h4 className="font-bold text-white mb-2">99.9% Accuracy</h4>
-                  <p className="text-sm text-gray-400">Advanced AI ensures accurate transaction categorization</p>
+                  <h4 className="font-bold text-neutral-900 mb-2">99.9% Accuracy</h4>
+                  <p className="text-sm text-neutral-600 font-medium">Advanced AI ensures accurate transaction categorization</p>
                 </div>
               </motion.div>
             )}

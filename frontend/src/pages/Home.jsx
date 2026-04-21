@@ -135,7 +135,11 @@ const Home = () => {
   ]
 
   return (
-    <div className="space-y-0 bg-neutral-50">
+    <div className="space-y-0 relative">
+      {/* Mesh gradient background overlay */}
+      <div className="fixed inset-0 -z-10 pointer-events-none">
+        <div className="absolute inset-0 bg-gradient-to-br from-neutral-50 via-blue-50/20 to-neutral-50"></div>
+      </div>
 
       {/* HERO SECTION */}
       <section className="relative overflow-hidden py-12 sm:py-16 md:py-24 lg:py-32 bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800">
@@ -311,7 +315,7 @@ const Home = () => {
       </section>
 
       {/* VALUE STATS RIBBON */}
-      <section className="py-12 bg-white">
+      <section className="py-12 bg-white/40 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             {stats.map((stat, index) => {
@@ -344,7 +348,7 @@ const Home = () => {
       </section>
 
       {/* HOW IT WORKS */}
-      <section className="py-20 bg-neutral-50">
+      <section className="py-20 bg-gradient-to-b from-transparent via-white/30 to-transparent">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -406,7 +410,7 @@ const Home = () => {
       </section>
 
       {/* DOCUMENT TYPES GRID */}
-      <section className="py-20 bg-white">
+      <section className="py-20 bg-white/50 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -414,10 +418,10 @@ const Home = () => {
             viewport={{ once: true }}
             className="text-center mb-16"
           >
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-neutral-900 mb-4">
               Analyze Any Financial Document
             </h2>
-            <p className="text-xl text-gray-400 max-w-3xl mx-auto">
+            <p className="text-xl text-neutral-600 max-w-3xl mx-auto">
               Our AI understands multiple types of financial statements and extracts meaningful insights from each
             </p>
           </motion.div>
@@ -438,7 +442,7 @@ const Home = () => {
                   {/* Glow effect on hover */}
                   <div className={`absolute inset-0 bg-gradient-to-br ${doc.color} opacity-0 group-hover:opacity-10 rounded-2xl blur-xl transition-opacity`}></div>
 
-                  <div className="relative bg-white rounded-2xl p-6 border border-neutral-200 group-hover:border-primary-300 shadow-md hover:shadow-xl transition-all">
+                  <div className="relative bg-white/90 backdrop-blur-sm rounded-2xl p-6 border border-neutral-200 group-hover:border-primary-300 shadow-lg hover:shadow-xl transition-all">
                     {doc.badge && (
                       <div className={`absolute top-4 right-4 ${doc.badgeColor} text-white text-xs font-bold px-3 py-1 rounded-full`}>
                         {doc.badge}
@@ -458,7 +462,7 @@ const Home = () => {
       </section>
 
       {/* AI CAPABILITIES GRID */}
-      <section className="py-20 bg-neutral-50">
+      <section className="py-20 bg-gradient-to-b from-transparent via-blue-50/20 to-transparent">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -466,10 +470,10 @@ const Home = () => {
             viewport={{ once: true }}
             className="text-center mb-16"
           >
-            <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
+            <h2 className="text-4xl md:text-5xl font-bold text-neutral-900 mb-4">
               Powerful AI Capabilities
             </h2>
-            <p className="text-xl text-gray-400 max-w-3xl mx-auto">
+            <p className="text-xl text-neutral-600 max-w-3xl mx-auto">
               Built with cutting-edge technology to give you the best financial insights
             </p>
           </motion.div>
@@ -490,7 +494,7 @@ const Home = () => {
                   viewport={{ once: true }}
                   transition={{ delay: index * 0.1 }}
                   whileHover={{ y: -5 }}
-                  className="relative bg-white rounded-2xl p-6 shadow-md hover:shadow-xl transition-all border border-neutral-200"
+                  className="relative bg-white/90 backdrop-blur-sm rounded-2xl p-6 shadow-lg hover:shadow-xl transition-all border border-neutral-200"
                 >
                   <div className={`absolute top-4 right-4 ${badgeColors[capability.badge]} text-white text-xs font-bold px-2 py-1 rounded-full`}>
                     {capability.badge}
@@ -512,7 +516,7 @@ const Home = () => {
       </section>
 
       {/* REAL-TIME PROCESSING SPLIT SECTION */}
-      <section className="py-20 bg-white">
+      <section className="py-20 bg-white/40 backdrop-blur-sm">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             {/* Left: Explainer */}
@@ -730,7 +734,7 @@ const Home = () => {
       </section>
 
       {/* ANALYTICS & DASHBOARD PREVIEW */}
-      <section className="py-20 bg-white">
+      <section className="py-20 bg-gradient-to-b from-transparent via-primary-50/10 to-transparent">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}

@@ -66,8 +66,8 @@ const Navbar = () => {
   return (
     <motion.nav
       className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled
-        ? 'bg-[var(--nav-bg)] backdrop-blur-lg border-b border-[var(--border-subtle)]'
-        : 'bg-transparent'
+        ? 'bg-white/90 backdrop-blur-lg border-b border-neutral-200 shadow-lg'
+        : 'bg-white/70 backdrop-blur-md border-b border-white/40'
         }`}
       initial={{ y: -100 }}
       animate={{ y: 0 }}
@@ -77,10 +77,10 @@ const Navbar = () => {
         <div className="flex items-center justify-between h-16">
           {/* Logo */}
           <Link to={user ? '/dashboard' : '/'} className="flex items-center space-x-2">
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-xl flex items-center justify-center">
+            <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl flex items-center justify-center shadow-lg">
               <span className="text-white font-bold text-xl">F</span>
             </div>
-            <span className="text-xl font-bold gradient-text">FinanceAI</span>
+            <span className="text-xl font-bold bg-gradient-to-r from-primary-600 to-primary-700 bg-clip-text text-transparent">FinanceAI</span>
           </Link>
 
           {/* Desktop Navigation */}
@@ -93,17 +93,17 @@ const Navbar = () => {
                     key={link.path}
                     to={link.path}
                     className={`relative px-4 py-2 rounded-lg transition-colors ${isActive(link.path)
-                      ? 'text-indigo-400'
-                      : 'text-gray-400 hover:text-white hover:bg-white/5'
+                      ? 'text-primary-600 bg-primary-50 font-semibold'
+                      : 'text-neutral-700 hover:text-primary-600 hover:bg-neutral-50 font-medium'
                       }`}
                   >
                     <div className="flex items-center space-x-2">
                       <Icon size={18} />
-                      <span className="font-medium">{link.label}</span>
+                      <span>{link.label}</span>
                     </div>
                     {isActive(link.path) && (
                       <motion.div
-                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-indigo-500 to-purple-600"
+                        className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-primary-500 to-primary-600"
                         layoutId="navbar-indicator"
                         transition={{ duration: 0.3 }}
                       />

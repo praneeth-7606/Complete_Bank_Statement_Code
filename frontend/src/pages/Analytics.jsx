@@ -106,13 +106,12 @@ const InsightCard = memo(({ insight, index }) => {
       initial={{ opacity: 0, x: -16 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.08, duration: 0.4 }}
-      className="flex items-start gap-3 p-4 rounded-xl"
-      style={{ background: isPositive ? 'rgba(16,185,129,0.06)' : 'rgba(99,102,241,0.06)', border: `1px solid ${isPositive ? 'rgba(16,185,129,0.15)' : 'rgba(99,102,241,0.15)'}` }}
+      className={`flex items-start gap-3 p-4 rounded-xl border ${isPositive ? 'bg-emerald-50 border-emerald-200' : 'bg-primary-50 border-primary-200'}`}
     >
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isPositive ? 'bg-emerald-500/20' : 'bg-indigo-500/20'}`}>
-        {isPositive ? <TrendingUp className="w-4 h-4 text-emerald-400" /> : <Brain className="w-4 h-4 text-indigo-400" />}
+      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isPositive ? 'bg-emerald-100' : 'bg-primary-100'}`}>
+        {isPositive ? <TrendingUp className="w-4 h-4 text-emerald-600" /> : <Brain className="w-4 h-4 text-primary-600" />}
       </div>
-      <p className="text-sm text-gray-300 leading-relaxed">{insight.replace('✅ ', '').replace('⚠️ ', '')}</p>
+      <p className="text-sm text-neutral-700 leading-relaxed font-medium">{insight.replace('✅ ', '').replace('⚠️ ', '')}</p>
     </motion.div>
   )
 })
@@ -122,13 +121,12 @@ InsightCard.displayName = 'InsightCard'
 const PeriodToggle = memo(({ value, onChange }) => {
   const periods = ['daily', 'weekly', 'monthly']
   return (
-    <div className="flex items-center gap-1 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+    <div className="flex items-center gap-1 p-1 rounded-xl bg-neutral-100 border border-neutral-200">
       {periods.map(p => (
         <button
           key={p}
           onClick={() => onChange(p)}
-          className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all duration-200 ${value === p ? 'text-white shadow-lg' : 'text-gray-500 hover:text-gray-300'}`}
-          style={value === p ? { background: 'linear-gradient(135deg, #6366f1, #8b5cf6)' } : {}}
+          className={`px-3 py-1.5 rounded-lg text-xs font-semibold capitalize transition-all duration-200 ${value === p ? 'text-white shadow-lg bg-gradient-to-r from-primary-600 to-primary-700' : 'text-neutral-600 hover:text-neutral-900 hover:bg-white'}`}
         >
           {p}
         </button>
@@ -146,17 +144,17 @@ const CategoryRow = memo(({ category, index, total, color }) => {
       initial={{ opacity: 0, y: 8 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ delay: index * 0.04 }}
-      className="group border-b border-white/5 hover:bg-white/3 transition-colors"
+      className="group border-b border-neutral-200 hover:bg-neutral-50 transition-colors"
     >
       <td className="py-3 px-4">
         <div className="flex items-center gap-3">
           <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ background: color }} />
-          <span className="text-sm font-medium text-gray-200">{category.name}</span>
+          <span className="text-sm font-medium text-neutral-900">{category.name}</span>
         </div>
       </td>
       <td className="py-3 px-4">
         <div className="flex items-center gap-3">
-          <div className="flex-1 h-1.5 rounded-full bg-white/5 overflow-hidden">
+          <div className="flex-1 h-1.5 rounded-full bg-neutral-200 overflow-hidden">
             <motion.div
               initial={{ width: 0 }}
               animate={{ width: `${pct}%` }}
@@ -165,11 +163,11 @@ const CategoryRow = memo(({ category, index, total, color }) => {
               style={{ background: color }}
             />
           </div>
-          <span className="text-xs text-gray-500 w-10 text-right">{pct}%</span>
+          <span className="text-xs text-neutral-600 w-10 text-right font-medium">{pct}%</span>
         </div>
       </td>
       <td className="py-3 px-4 text-right">
-        <span className="text-sm font-bold text-white">₹{(category.value || 0).toLocaleString('en-IN')}</span>
+        <span className="text-sm font-bold text-neutral-900">₹{(category.value || 0).toLocaleString('en-IN')}</span>
       </td>
     </motion.tr>
   )
@@ -260,9 +258,9 @@ const Analytics = () => {
           <motion.div
             animate={{ rotate: 360 }}
             transition={{ duration: 1.5, repeat: Infinity, ease: 'linear' }}
-            className="w-16 h-16 rounded-full border-2 border-indigo-500/30 border-t-indigo-500 mx-auto mb-6"
+            className="w-16 h-16 rounded-full border-2 border-primary-200 border-t-primary-600 mx-auto mb-6"
           />
-          <p className="text-gray-400 text-sm font-medium tracking-wide">Loading analytics…</p>
+          <p className="text-neutral-600 text-sm font-medium tracking-wide">Loading analytics…</p>
         </div>
       </div>
     )
@@ -272,13 +270,12 @@ const Analytics = () => {
     return (
       <div className="flex items-center justify-center p-8">
         <div className="text-center max-w-md">
-          <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/20 flex items-center justify-center mx-auto mb-4">
-            <TrendingDown className="w-8 h-8 text-rose-400" />
+          <div className="w-16 h-16 rounded-2xl bg-rose-100 border border-rose-200 flex items-center justify-center mx-auto mb-4">
+            <TrendingDown className="w-8 h-8 text-rose-600" />
           </div>
-          <h3 className="text-lg font-bold text-white mb-2">Couldn't load data</h3>
-          <p className="text-gray-400 text-sm mb-6">{error}</p>
-          <button onClick={() => fetchAnalyticsData()} className="px-6 py-2.5 rounded-xl font-semibold text-white text-sm"
-            style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+          <h3 className="text-lg font-bold text-neutral-900 mb-2">Couldn't load data</h3>
+          <p className="text-neutral-600 text-sm mb-6 font-medium">{error}</p>
+          <button onClick={() => fetchAnalyticsData()} className="px-6 py-2.5 rounded-xl font-semibold text-white text-sm bg-gradient-to-r from-primary-600 to-primary-700 hover:from-primary-700 hover:to-primary-800 transition-all shadow-lg">
             Retry
           </button>
         </div>
@@ -366,11 +363,10 @@ const Analytics = () => {
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.3 }}
-          className="lg:col-span-2 rounded-2xl p-6"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="lg:col-span-2 rounded-2xl p-6 bg-white/80 backdrop-blur-sm border border-neutral-200 shadow-lg"
         >
-          <h3 className="text-base font-bold text-white mb-1">Spending by Category</h3>
-          <p className="text-xs text-gray-500 mb-4">Distribution across all categories</p>
+          <h3 className="text-base font-bold text-neutral-900 mb-1">Spending by Category</h3>
+          <p className="text-xs text-neutral-600 mb-4 font-medium">Distribution across all categories</p>
           {analyticsData.categoryData.length > 0 ? (
             <>
               <ResponsiveContainer width="100%" height={220}>
@@ -390,15 +386,15 @@ const Analytics = () => {
                   <div key={i} className="flex items-center justify-between text-xs">
                     <div className="flex items-center gap-2">
                       <span className="w-2 h-2 rounded-full" style={{ background: PALETTE[i % PALETTE.length] }} />
-                      <span className="text-gray-400 truncate max-w-[120px]">{c.name}</span>
+                      <span className="text-neutral-700 truncate max-w-[120px] font-medium">{c.name}</span>
                     </div>
-                    <span className="text-gray-300 font-semibold">₹{(c.value || 0).toLocaleString('en-IN')}</span>
+                    <span className="text-neutral-900 font-semibold">₹{(c.value || 0).toLocaleString('en-IN')}</span>
                   </div>
                 ))}
               </div>
             </>
           ) : (
-            <div className="h-[220px] flex items-center justify-center text-gray-600 text-sm">No category data</div>
+            <div className="h-[220px] flex items-center justify-center text-neutral-600 text-sm font-medium">No category data</div>
           )}
         </motion.div>
 
@@ -407,13 +403,12 @@ const Analytics = () => {
           initial={{ opacity: 0, scale: 0.97 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ delay: 0.4 }}
-          className="lg:col-span-3 rounded-2xl p-6"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="lg:col-span-3 rounded-2xl p-6 bg-white/80 backdrop-blur-sm border border-neutral-200 shadow-lg"
         >
           <div className="flex items-center justify-between mb-4">
             <div>
-              <h3 className="text-base font-bold text-white mb-0.5">Income vs Expenses</h3>
-              <p className="text-xs text-gray-500">Compare cash flow over time</p>
+              <h3 className="text-base font-bold text-neutral-900 mb-0.5">Income vs Expenses</h3>
+              <p className="text-xs text-neutral-600 font-medium">Compare cash flow over time</p>
             </div>
             <PeriodToggle value={period} onChange={setPeriod} />
           </div>
@@ -430,17 +425,17 @@ const Analytics = () => {
                     <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
                   </linearGradient>
                 </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.1)" />
                 <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
                 <Tooltip content={<SlickTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12, color: '#9ca3af' }} />
+                <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
                 <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2} fill="url(#gIncome)" name="Income" dot={false} />
                 <Area type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} fill="url(#gExpenses)" name="Expenses" dot={false} />
               </AreaChart>
             </ResponsiveContainer>
           ) : (
-            <div className="h-[240px] flex items-center justify-center text-gray-600 text-sm">No timeline data yet</div>
+            <div className="h-[240px] flex items-center justify-center text-neutral-600 text-sm font-medium">No timeline data yet</div>
           )}
         </motion.div>
       </div>
@@ -450,30 +445,29 @@ const Analytics = () => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.5 }}
-        className="rounded-2xl p-6"
-        style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+        className="rounded-2xl p-6 bg-white/80 backdrop-blur-sm border border-neutral-200 shadow-lg"
       >
         <div className="flex items-center gap-3 mb-4">
-          <Activity className="w-5 h-5 text-indigo-400" />
+          <Activity className="w-5 h-5 text-primary-600" />
           <div>
-            <h3 className="text-base font-bold text-white">Spending Trend</h3>
-            <p className="text-xs text-gray-500">Cumulative expense pattern over time</p>
+            <h3 className="text-base font-bold text-neutral-900">Spending Trend</h3>
+            <p className="text-xs text-neutral-600 font-medium">Cumulative expense pattern over time</p>
           </div>
         </div>
         {analyticsData.monthlyData.length > 0 ? (
           <ResponsiveContainer width="100%" height={200}>
             <LineChart data={analyticsData.monthlyData} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" />
+              <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.1)" />
               <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
               <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
               <Tooltip content={<SlickTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 12, color: '#9ca3af' }} />
+              <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
               <Line type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Expenses" />
               <Line type="monotone" dataKey="income" stroke="#6366f1" strokeWidth={2.5} dot={false} name="Income" />
             </LineChart>
           </ResponsiveContainer>
         ) : (
-          <div className="h-[200px] flex items-center justify-center text-gray-600 text-sm">No data available</div>
+          <div className="h-[200px] flex items-center justify-center text-neutral-600 text-sm font-medium">No data available</div>
         )}
       </motion.div>
 
@@ -485,22 +479,21 @@ const Analytics = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.6 }}
-          className="rounded-2xl p-6"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="rounded-2xl p-6 bg-white/80 backdrop-blur-sm border border-neutral-200 shadow-lg"
         >
           <div className="flex items-center gap-3 mb-4">
-            <div className="w-8 h-8 rounded-xl flex items-center justify-center" style={{ background: 'linear-gradient(135deg,#6366f1,#8b5cf6)' }}>
+            <div className="w-8 h-8 rounded-xl flex items-center justify-center bg-gradient-to-br from-primary-600 to-primary-700">
               <Brain className="w-4 h-4 text-white" />
             </div>
             <div>
-              <h3 className="text-base font-bold text-white">AI Insights</h3>
-              <p className="text-xs text-gray-500">Powered by your financial data</p>
+              <h3 className="text-base font-bold text-neutral-900">AI Insights</h3>
+              <p className="text-xs text-neutral-600 font-medium">Powered by your financial data</p>
             </div>
           </div>
           <div className="space-y-3">
             {analyticsData.insights.length > 0
               ? analyticsData.insights.map((insight, i) => <InsightCard key={i} insight={insight} index={i} />)
-              : <p className="text-gray-600 text-sm text-center py-8">No insights yet — upload statements to get started</p>
+              : <p className="text-neutral-600 text-sm text-center py-8 font-medium">No insights yet — upload statements to get started</p>
             }
           </div>
         </motion.div>
@@ -510,21 +503,20 @@ const Analytics = () => {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ delay: 0.7 }}
-          className="rounded-2xl overflow-hidden"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.07)' }}
+          className="rounded-2xl overflow-hidden bg-white/80 backdrop-blur-sm border border-neutral-200 shadow-lg"
         >
           <div className="p-6 pb-4">
-            <h3 className="text-base font-bold text-white mb-0.5">Category Breakdown</h3>
-            <p className="text-xs text-gray-500">Detailed spending by category</p>
+            <h3 className="text-base font-bold text-neutral-900 mb-0.5">Category Breakdown</h3>
+            <p className="text-xs text-neutral-600 font-medium">Detailed spending by category</p>
           </div>
           {analyticsData.categoryData.length > 0 ? (
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
-                  <tr style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
-                    <th className="text-left py-2 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide">Category</th>
-                    <th className="text-left py-2 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide">Share</th>
-                    <th className="text-right py-2 px-4 text-xs font-semibold text-gray-500 uppercase tracking-wide">Amount</th>
+                  <tr className="border-b border-neutral-200">
+                    <th className="text-left py-2 px-4 text-xs font-semibold text-neutral-600 uppercase tracking-wide">Category</th>
+                    <th className="text-left py-2 px-4 text-xs font-semibold text-neutral-600 uppercase tracking-wide">Share</th>
+                    <th className="text-right py-2 px-4 text-xs font-semibold text-neutral-600 uppercase tracking-wide">Amount</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -535,7 +527,7 @@ const Analytics = () => {
               </table>
             </div>
           ) : (
-            <div className="text-center py-8 text-gray-600 text-sm px-6">
+            <div className="text-center py-8 text-neutral-600 text-sm px-6 font-medium">
               No category data available. Upload a statement to see your breakdown.
             </div>
           )}
