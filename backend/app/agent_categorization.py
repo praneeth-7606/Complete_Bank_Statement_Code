@@ -7,11 +7,11 @@ import datetime
 from pathlib import Path
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from .config import settings
+from .llm_provider import build_llm, build_structured_llm
 from . import models
 
 logger = logging.getLogger(__name__)
@@ -132,12 +132,8 @@ class CategorizationAgent:
     """Production-grade self-learning financial intelligence engine."""
     
     def __init__(self, model_name="gemini-2.5-flash"):
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name, 
-            temperature=0, 
-            google_api_key=settings.GEMINI_API_KEY
-        )
-        self.structured_llm = self.llm.with_structured_output(BatchCategorization)
+        self.llm = build_llm(model_name, temperature=0)
+        self.structured_llm = build_structured_llm(BatchCategorization, model_name, temperature=0)
         
         # Tools for the Insights Agent
         self._setup_investigator()

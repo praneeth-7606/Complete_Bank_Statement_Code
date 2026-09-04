@@ -4,8 +4,8 @@ import re
 import asyncio
 import logging
 from typing import Dict, Any
-from langchain_google_genai import ChatGoogleGenerativeAI
 from .config import settings
+from .llm_provider import build_llm
 
 logger = logging.getLogger(__name__)
 
@@ -22,12 +22,7 @@ def extract_json_from_response(text: str) -> Any:
 class BaseAgent:
     """A base class for generative AI agents using LangChain with consistent auth and retry logic."""
     def __init__(self, model_name="gemini-2.0-flash", temperature=0.3):
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name, 
-            temperature=temperature,
-            google_api_key=settings.GEMINI_API_KEY,
-            max_retries=3
-        )
+        self.llm = build_llm(model_name, temperature)
     
     async def _get_json_response(self, prompt: str) -> Dict[str, Any]:
         """Get JSON response using LangChain and a robust JSON output parser."""

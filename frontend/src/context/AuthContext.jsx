@@ -1,6 +1,7 @@
 import { createContext, useState, useContext, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
+import { API_BASE_URL } from '../services/api'
 
 const AuthContext = createContext(null)
 
@@ -18,7 +19,7 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(localStorage.getItem('access_token'))
   const navigate = useNavigate()
 
-  const API_URL = 'http://localhost:8080'
+  const API_URL = API_BASE_URL
 
   // Set axios default configuration
   useEffect(() => {

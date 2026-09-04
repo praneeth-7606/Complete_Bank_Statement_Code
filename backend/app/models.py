@@ -3,6 +3,7 @@ from beanie import Document
 from pydantic import BaseModel, Field, EmailStr
 import uuid
 import datetime
+from decimal import Decimal
 from typing import List, Dict, Any, Optional
 
 # --- Beanie Document Models (for MongoDB) ---
@@ -41,15 +42,15 @@ class Transaction(Document):
     # Core transaction fields
     date: datetime.date
     description: str
-    amount: float
+    amount: Decimal
     category: str
     upload_id: str
     user_id: Optional[str] = None  # Link to user who uploaded this transaction
 
     # --- FIX IMPLEMENTED HERE ---
     # Add explicit fields for debit and credit to enable precise filtering.
-    debit: float = 0.0
-    credit: float = 0.0
+    debit: Decimal = Decimal("0.00")
+    credit: Decimal = Decimal("0.00")
     # --- END OF FIX ---
     
     # Encrypted fields for sensitive data
@@ -66,6 +67,9 @@ class Upload(Document):
     model_config = {"arbitrary_types_allowed": True}
     
     # Basic info
+    # Stable application-level identifier shared by the API, job queue, and UI.
+    upload_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    file_hash: Optional[str] = None
     filename: str
     timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
     user_id: Optional[str] = None  # Link to user who uploaded this statement
@@ -96,7 +100,7 @@ class Upload(Document):
     
     class Settings:
         name = "uploads"
-        indexes = ["user_id", "timestamp"]
+        indexes = ["upload_id", "user_id", "timestamp"]
 
 class Correction(Document):
     """Represents a user-defined rule for correcting categories."""
@@ -108,6 +112,24 @@ class Correction(Document):
     class Settings:
         name = "corrections"
         indexes = ["transaction_description_keyword", "user_id"]
+
+
+class ProcessingJob(Document):
+    """Durable processing state used by the API and future worker processes."""
+    job_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    upload_id: str
+    user_id: str
+    status: str = "queued"  # queued, running, completed, failed
+    stage: str = "post_processing"
+    error_message: Optional[str] = None
+    attempts: int = 0
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    started_at: Optional[datetime.datetime] = None
+    completed_at: Optional[datetime.datetime] = None
+
+    class Settings:
+        name = "processing_jobs"
+        indexes = ["job_id", "upload_id", "user_id", "status", "created_at"]
 
 # --- Pydantic Models (for API request/response validation) ---
 

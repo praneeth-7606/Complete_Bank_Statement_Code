@@ -24,6 +24,8 @@ import logging
 import asyncio
 import re
 import time
+import uuid
+import hashlib
 import tempfile
 import fitz  # PyMuPDF
 from PIL import Image
@@ -759,6 +761,15 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 await log_streamer.add_log(streaming_id, "[OK] Categorization Complete! Your results are ready.", "success", 98)
                 await log_streamer.add_log(streaming_id, "[RETRY] Insights & Persistence running in background...", "info", 100)
 
+            # Persist a job record before launching the best-effort in-process
+            # task. A separate worker can later claim queued jobs after restart.
+            await models.ProcessingJob(
+                upload_id=streaming_id or str(uuid.uuid4()),
+                user_id=str(user_id),
+                status="queued",
+                stage="post_processing",
+            ).insert()
+
             # TRIGGER ASYNC PHASE (Background: Insights, DB, Vector)
             asyncio.create_task(self._run_post_processing_background(final_state))
             
@@ -784,7 +795,16 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         """
         t_bg_start = time.time()
         streaming_id = state.get("streaming_id")
+        job = await models.ProcessingJob.find_one(
+            models.ProcessingJob.upload_id == streaming_id,
+            models.ProcessingJob.user_id == str(state.get("user_id")),
+        )
         try:
+            if job:
+                job.status = "running"
+                job.attempts += 1
+                job.started_at = datetime.utcnow()
+                await job.save()
             logger.info(f"[API] [Background] Starting post-processing for {streaming_id}")
 
             #  STEP 1: Generate Financial Insights (LLM, slow) 
@@ -804,6 +824,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             if state.get("categorized_transactions"):
                 try:
                     upload = models.Upload(
+                        upload_id=streaming_id,
+                        file_hash=hashlib.sha256(state["file_bytes"]).hexdigest(),
                         filename=state["file_path"],
                         file_size_bytes=len(state["file_bytes"]),
                         status="completed",
@@ -813,7 +835,6 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                         total_transactions=len(state["categorized_transactions"]),
                         processing_time_seconds=round(time.time() - t_bg_start, 2),
                         insights=bg_insights.get("insights", []) if isinstance(bg_insights, dict) else [],
-                        upload_id=streaming_id
                     )
                     await upload.save()
                     db_upload_id = str(upload.id)
@@ -831,12 +852,14 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                             debit=float(tx.get("debit", 0)),
                             credit=float(tx.get("credit", 0)),
                             category=tx.get("category", "Other"),
-                            upload_id=db_upload_id,
+                            upload_id=streaming_id,
                             user_id=state["user_id"]
                         ))
 
                     if db_txns:
                         await models.Transaction.insert_many(db_txns)
+                    upload.db_save_completed = True
+                    await upload.save()
                     logger.info(f"   [OK] [Background] Saved {len(db_txns)} transactions to MongoDB.")
                 except Exception as e:
                     logger.error(f"Background DB Error: {e}")
@@ -854,7 +877,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     tx_dicts = []
                     for i, tx in enumerate(state["categorized_transactions"]):
                         d = tx.copy()
-                        d["upload_id"] = db_upload_id
+                        d["upload_id"] = streaming_id
                         d["user_id"] = state["user_id"]
                         if i < len(db_txns):
                             d["transaction_id"] = str(db_txns[i].id)
@@ -864,6 +887,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                         tx_dicts.append(d)
                     
                     await vector_db.add_transactions(tx_dicts)
+                    upload.vector_index_completed = True
+                    await upload.save()
                     logger.info(f"   [OK] [Background] Indexed {len(tx_dicts)} vectors in Pinecone.")
                 except Exception as e:
                     logger.warning(f"Background Vector Error: {e}")
@@ -887,11 +912,20 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     timing_breakdown=state["timing"]
                 )
                 logger.info(f"   [OK] [Background] All tasks complete in {bg_duration:.1f}s.")
+                if job:
+                    job.status = "completed"
+                    job.stage = "complete"
+                    job.completed_at = datetime.utcnow()
+                    await job.save()
             except Exception as e:
                 logger.warning(f"Background Final Audit Error: {e}")
 
         except Exception as e:
             logger.error(f"[FAIL] Critical Background Failure: {e}")
+            if job:
+                job.status = "failed"
+                job.error_message = "Post-processing failed"
+                await job.save()
 
 
     # ----------------------------------------------------------

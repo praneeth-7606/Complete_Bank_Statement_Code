@@ -3,12 +3,12 @@ import logging
 import datetime
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 from .base_agent import BaseAgent
 from .config import settings
+from .llm_provider import build_structured_llm
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +81,7 @@ class FinancialAnalystAgent(BaseAgent):
     """Production-grade financial insights generator using an Agent-driven approach with strictly deterministic tools and LangGraph."""
     
     def __init__(self, model_name="gemini-2.5-flash"):
+        self.model_name = model_name
         super().__init__(model_name=model_name)
         
         # Tools for the Insights Agent
@@ -113,7 +114,7 @@ class FinancialAnalystAgent(BaseAgent):
             
             # Step 2: Final structuring call to ensure contract is met
             struct_prompt = f"Convert the following financial analysis into the strictly required JSON format with 'insights' (list) and 'summary' (string).\n\nAnalysis:\n{last_message}"
-            final_output = await self.llm.with_structured_output(FinancialAnalysisOutput).ainvoke(struct_prompt)
+            final_output = await build_structured_llm(FinancialAnalysisOutput, self.model_name, temperature=0.3).ainvoke(struct_prompt)
             
             return final_output.model_dump()
             

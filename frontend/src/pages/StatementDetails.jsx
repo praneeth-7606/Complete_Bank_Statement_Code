@@ -4,20 +4,14 @@ import { statementsAPI } from '../services/api';
 import {
   ArrowLeft,
   FileText,
-  Clock,
-  Database,
   TrendingUp,
   TrendingDown,
-  Calendar,
-  CheckCircle,
   AlertCircle,
   Loader,
-  Download,
   Filter,
   Search,
   Trash2
 } from 'lucide-react';
-import { Button, Card, Badge, Skeleton, EmptyState, Input } from '../components/ui';
 
 export default function StatementDetails() {
   const { uploadId } = useParams();
@@ -115,24 +109,6 @@ export default function StatementDetails() {
     return `₹${parseFloat(amount).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
   };
 
-  const getCategoryColor = (category) => {
-    const colors = {
-      'Food & Dining': 'bg-orange-100 text-orange-800 border-orange-200',
-      'Shopping': 'bg-pink-100 text-pink-800 border-pink-200',
-      'Transport': 'bg-blue-100 text-blue-800 border-blue-200',
-      'Entertainment': 'bg-purple-100 text-purple-800 border-purple-200',
-      'Bills & Utilities': 'bg-yellow-100 text-yellow-800 border-yellow-200',
-      'Income': 'bg-green-100 text-green-800 border-green-200',
-      'Investments': 'bg-indigo-100 text-indigo-800 border-indigo-200',
-      'Healthcare': 'bg-red-100 text-red-800 border-red-200',
-      'Education': 'bg-cyan-100 text-cyan-800 border-cyan-200',
-      'Personal Transfer': 'bg-teal-100 text-teal-800 border-teal-200',
-      'Others': 'bg-gray-100 text-gray-800 border-gray-200',
-      'Uncategorized': 'bg-gray-100 text-gray-800 border-gray-200'
-    };
-    return colors[category] || colors['Uncategorized'];
-  };
-
   const categories = [...new Set(transactions.map(t => t.category))];
 
   const totalDebit = transactions.reduce((sum, t) => sum + t.debit, 0);
@@ -213,7 +189,7 @@ export default function StatementDetails() {
                     Confirm Deletion
                   </h3>
                   <p className="text-gray-400 mb-3">
-                    Are you sure you want to delete "{statement?.filename}"?
+                    Are you sure you want to delete &quot;{statement?.filename}&quot;?
                   </p>
                   <p className="text-sm text-gray-500 mb-3">
                     This will permanently remove:
@@ -381,6 +357,7 @@ export default function StatementDetails() {
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-200">
+                {filteredTransactions.map((transaction) => (
                 <tr key={transaction.id} className="hover:bg-white/[0.02] transition-colors border-b border-white/5">
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
                     {formatDate(transaction.date)}
@@ -412,6 +389,7 @@ export default function StatementDetails() {
                     </span>
                   </td>
                 </tr>
+                ))}
               </tbody>
             </table>
           </div>

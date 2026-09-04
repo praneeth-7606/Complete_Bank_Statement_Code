@@ -11,12 +11,12 @@ from typing import Any, Dict, List
 
 from langchain.tools import tool
 from langchain_core.messages import HumanMessage
-from langchain_google_genai import ChatGoogleGenerativeAI
 
 from .groww_client import groww_client
 from .response_formatter import investment_formatter
 from .memory import conversation_memory
 from ..config import settings
+from ..llm_provider import build_llm
 
 logger = logging.getLogger(__name__)
 
@@ -172,11 +172,7 @@ GROWW_TOOLS = [
 # ════════════════════════════════════════════════════════════════════════════
 
 def _build_llm():
-    return ChatGoogleGenerativeAI(
-        model="gemini-2.5-flash",
-        google_api_key=settings.GEMINI_API_KEY,
-        temperature=0,
-    )
+    return build_llm(settings.GEMINI_MODEL, temperature=0)
 
 
 def _build_agent(tools: list, llm, conversation_context: str = ""):

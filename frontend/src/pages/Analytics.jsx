@@ -235,7 +235,9 @@ const Analytics = () => {
       if (res.data.status === 'success') {
         setAnalyticsData(prev => ({ ...prev, monthlyData: res.data.data.periods }))
       }
-    } catch { }
+    } catch {
+      setAnalyticsData(prev => ({ ...prev, monthlyData: [] }))
+    }
   }, [period])
 
   useEffect(() => { fetchAnalyticsData() }, [fetchAnalyticsData])
