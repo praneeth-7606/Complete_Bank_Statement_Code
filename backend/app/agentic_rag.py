@@ -23,12 +23,12 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.tools import tool
-from langchain_google_genai import ChatGoogleGenerativeAI
 from motor.motor_asyncio import AsyncIOMotorClient
 from pydantic import BaseModel, Field, field_validator
 
 from . import models
 from .config import settings
+from .llm_provider import build_llm, build_structured_llm
 from .vector_store_pinecone import PineconeVectorStore
 from .rag_logger import rag_logger
 
@@ -234,12 +234,8 @@ RECENT CONVERSATION:
 
 class PlanningAgent:
     def __init__(self):
-        self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",          
-            temperature=0.0,
-            google_api_key=settings.GEMINI_API_KEY,
-        )
-        self.structured_llm = self.llm.with_structured_output(QueryPlan)
+        self.llm = build_llm(settings.GEMINI_MODEL, temperature=0.0)
+        self.structured_llm = build_structured_llm(QueryPlan, settings.GEMINI_MODEL, temperature=0.0)
 
     def _build_system_prompt(self, history: List[Dict]) -> str:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -569,7 +565,7 @@ REQUIRED JSON FORMAT:
 
 class ResponseGenerator:
     async def generate(self, query: str, context: FinancialContext, plan: QueryPlan) -> Dict:
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.1, google_api_key=settings.GEMINI_API_KEY)
+        llm = build_llm(settings.GEMINI_MODEL, temperature=0.1)
         
         raw_txns = context.raw_docs[:200] # Safe token limit for Gemini 2.5 Flash
         

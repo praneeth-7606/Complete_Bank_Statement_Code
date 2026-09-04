@@ -8,13 +8,13 @@ import logging
 from .config import settings
 from calendar import monthrange
 from pydantic import BaseModel, Field, model_validator
-from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import ChatPromptTemplate
 
 logger = logging.getLogger(__name__)
 genai.configure(api_key=settings.GEMINI_API_KEY)
 
 from .base_agent import BaseAgent, extract_json_from_response
+from .llm_provider import build_llm, build_structured_llm
 
 
 
@@ -42,12 +42,8 @@ class TransactionStructuringAgent:
     """Parses raw transaction lines into structured JSON using LangChain (LLM-First, No Agent Loop)."""
     
     def __init__(self, model_name="gemini-2.5-flash"):
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name, 
-            temperature=0.1,
-            google_api_key=settings.GEMINI_API_KEY
-        )
-        self.structured_llm = self.llm.with_structured_output(BatchStructuredTransactions)
+        self.llm = build_llm(model_name, temperature=0.1)
+        self.structured_llm = build_structured_llm(BatchStructuredTransactions, model_name, temperature=0.1)
 
     async def structure_mini_batch(self, transaction_lines: List[str]) -> List[Dict]:
         """Structure 2-5 transactions for optimal accuracy/speed balance."""
@@ -171,12 +167,8 @@ class QueryRouterAgent:
     """Analyzes a user query to decide between vector search and filter-based search using Structured Output."""
     
     def __init__(self, model_name="gemini-2.5-flash"):
-        self.llm = ChatGoogleGenerativeAI(
-            model=model_name, 
-            temperature=0.1,
-            google_api_key=settings.GEMINI_API_KEY
-        )
-        self.structured_llm = self.llm.with_structured_output(RoutePayload)
+        self.llm = build_llm(model_name, temperature=0.1)
+        self.structured_llm = build_structured_llm(RoutePayload, model_name, temperature=0.1)
 
     async def route_query(self, user_query: str) -> Dict:
         current_year = datetime.datetime.now().year
@@ -337,4 +329,3 @@ class EmbeddingAgent:
 # app/agents.py - COMPLETE FINAL VERSION FOR YOUR BANK FORMAT
 
 # app/agents.py - FINAL WORKING VERSION FOR YOUR BANK STATEMENT
-

@@ -15,6 +15,7 @@ import {
 } from 'lucide-react';
 import ProcessingStages from './processing/ProcessingStages';
 import notificationManager from '../utils/notifications';
+import { API_BASE_URL } from '../services/api';
 
 const LogViewer = ({ uploadId, onComplete }) => {
   const [logs, setLogs] = useState([]);
@@ -22,20 +23,16 @@ const LogViewer = ({ uploadId, onComplete }) => {
   const [isComplete, setIsComplete] = useState(false);
   const [error, setError] = useState(null);
   const logsEndRef = useRef(null);
-  const eventSourceRef = useRef(null);
+  const abortRef = useRef(null);
 
   useEffect(() => {
     if (!uploadId) return;
 
-    // Connect to SSE endpoint
-    const eventSource = new EventSource(
-      `http://localhost:8080/stream-logs/${uploadId}`
-    );
-    eventSourceRef.current = eventSource;
+    const controller = new AbortController();
+    abortRef.current = controller;
 
-    eventSource.onmessage = (event) => {
+    const handleLog = (logEntry) => {
       try {
-        const logEntry = JSON.parse(event.data);
         
         // Update logs
         setLogs((prevLogs) => [...prevLogs, logEntry]);
@@ -81,7 +78,7 @@ const LogViewer = ({ uploadId, onComplete }) => {
         if (logEntry.level === 'complete' || isProgressComplete) {
           setIsComplete(true);
           setProgress(100);
-          eventSource.close();
+          controller.abort();
           if (onComplete) {
             setTimeout(() => onComplete(), 800); // brief delay so user sees 100%
           }
@@ -96,43 +93,36 @@ const LogViewer = ({ uploadId, onComplete }) => {
       }
     };
 
-    eventSource.onerror = (err) => {
-      console.error('SSE Error:', err);
-      
-      if (eventSource.readyState === EventSource.CLOSED) {
-        // If we already received logs, the stream closed normally (processing done)
-        // Use functional state read via setTimeout to get latest logs value
-        setTimeout(() => {
-          setLogs((currentLogs) => {
-            if (currentLogs.length > 0) {
-              // Stream closed after getting logs — treat as complete
-              setIsComplete(true);
-              setProgress((p) => Math.max(p, 100));
-              if (onComplete) onComplete();
-            } else {
-              setError('Waiting for processing to start...');
-            }
-            return currentLogs; // return unchanged
+    const connect = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/stream-logs/${uploadId}`, {
+          headers: { Authorization: `Bearer ${localStorage.getItem('access_token') || ''}` },
+          signal: controller.signal,
+        });
+        if (!response.ok || !response.body) throw new Error('Unable to connect to processing logs');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        while (!controller.signal.aborted) {
+          const { value, done } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const events = buffer.split('\n\n');
+          buffer = events.pop() || '';
+          events.forEach((event) => {
+            const data = event.split('\n').find((line) => line.startsWith('data: '));
+            if (data) handleLog({ data: data.slice(6) });
           });
-        }, 2000);
-        return;
-      }
-      
-      // Only show error if we haven't received any logs yet
-      if (logs.length === 0) {
-        setTimeout(() => {
-          if (logs.length === 0 && eventSource.readyState !== EventSource.OPEN) {
-            setError('Waiting for processing to start...');
-          }
-        }, 2000);
+        }
+      } catch (err) {
+        if (!controller.signal.aborted) setError(err.message || 'Waiting for processing to start...');
       }
     };
+    connect();
 
     // Cleanup
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      controller.abort();
     };
   }, [uploadId, onComplete]);
 

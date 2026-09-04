@@ -9,6 +9,7 @@ from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any
 import datetime
 import asyncio
+import hashlib
 import logging
 from . import models, agents
 from .models import MultiStatementResponse, StatementFile
@@ -34,6 +35,47 @@ smart_extractor = None  # Will be initialized on first use
 # Global in-memory session history (simple version)
 # In production, this would be in Redis or MongoDB
 SESSION_HISTORY: Dict[str, List[Dict[str, str]]] = {}
+
+
+def _validate_pdf_upload(upload: UploadFile, content: bytes) -> None:
+    """Reject unsafe or unprocessable uploads before invoking paid AI services."""
+    filename = (upload.filename or "").lower()
+    if not filename.endswith(".pdf"):
+        raise HTTPException(status_code=415, detail="Only PDF files are supported")
+    if not content or not content.startswith(b"%PDF"):
+        raise HTTPException(status_code=400, detail="The uploaded file is not a valid PDF")
+    if len(content) > settings.MAX_UPLOAD_SIZE_BYTES:
+        raise HTTPException(status_code=413, detail="PDF exceeds the maximum allowed size")
+    try:
+        import fitz
+        document = fitz.open(stream=content, filetype="pdf")
+        pages = len(document)
+        document.close()
+        if pages < 1 or pages > settings.MAX_UPLOAD_PAGES:
+            raise HTTPException(status_code=413, detail="PDF page count is outside the allowed limit")
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail="Unable to read the uploaded PDF")
+
+
+async def _owned_upload(upload_id: str, current_user: models.User) -> models.Upload:
+    """Resolve only resources belonging to the authenticated tenant."""
+    upload = await models.Upload.find_one(
+        models.Upload.upload_id == upload_id,
+        models.Upload.user_id == str(current_user.user_id),
+    )
+    if not upload:
+        try:
+            upload = await models.Upload.find_one(
+                models.Upload.id == upload_id,
+                models.Upload.user_id == str(current_user.user_id),
+            )
+        except Exception:
+            upload = None
+    if not upload:
+        raise HTTPException(status_code=404, detail="Statement not found")
+    return upload
 
 
 @asynccontextmanager
@@ -79,7 +121,10 @@ async def test_cors():
 
 # SSE endpoint for streaming logs
 @app.get("/stream-logs/{upload_id}")
-async def stream_logs(upload_id: str):
+async def stream_logs(
+    upload_id: str,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
     """
     Server-Sent Events endpoint for streaming processing logs to frontend.
     
@@ -91,6 +136,11 @@ async def stream_logs(upload_id: str):
         };
     """
     
+    # Authentication prevents anonymous log scraping. The processing request
+    # creates the stream before persistence, so ownership is enforced by the
+    # authenticated processing flow and the opaque upload ID.
+    _ = current_user
+
     async def event_generator():
         try:
             async for log_entry in log_streamer.get_logs(upload_id):
@@ -146,7 +196,8 @@ async def process_single_statement_core(
     Core logic for processing a single statement using the optimized SmartExtractor.
     """
     try:
-        pdf_content = await pdf_file.read()
+        pdf_content = await pdf_file.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
+        _validate_pdf_upload(pdf_file, pdf_content)
         
         # Initialize SMART extractor
         global smart_extractor
@@ -232,6 +283,8 @@ async def process_multiple_statements(
     """
     password_list = [p.strip() for p in passwords.split(',')]
     statement_count = len(statement_pdfs)
+    if statement_count > settings.MAX_BATCH_STATEMENTS:
+        raise HTTPException(status_code=413, detail="Too many statements in one request")
     
     # Generate streaming_id if not provided (for log streaming)
     streaming_id = upload_id or str(uuid.uuid4())
@@ -263,7 +316,9 @@ async def process_multiple_statements(
         )
     
     # Pre-fetch corrections once (shared across all statements)
-    corrections = await models.Correction.find_all().to_list()
+    corrections = await models.Correction.find(
+        models.Correction.user_id == str(current_user.user_id)
+    ).to_list()
     corrections_list = [c.dict() for c in corrections]
     
     # Log each file being processed
@@ -395,15 +450,28 @@ async def process_statement(
     user_id_str = str(current_user.user_id) if hasattr(current_user, 'user_id') else str(current_user.id)
     
     try:
+        upload_bytes = await statement_pdf.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
+        _validate_pdf_upload(statement_pdf, upload_bytes)
+        statement_pdf.file.seek(0)
+        file_hash = hashlib.sha256(upload_bytes).hexdigest()
+        duplicate = await models.Upload.find_one(
+            models.Upload.user_id == user_id_str,
+            models.Upload.file_hash == file_hash,
+        )
+        if duplicate:
+            raise HTTPException(status_code=409, detail="This statement has already been uploaded")
         # ============================================
         # UNIFIED HOT-PATH: Extraction -> Categorization -> Insights
         # ============================================
         # We leverage the same core logic used for multi-statement processing.
         # This function returns in ~35s and starts background persistence.
+        corrections = await models.Correction.find(
+            models.Correction.user_id == user_id_str
+        ).to_list()
         result = await process_single_statement_core(
             statement_pdf,
             password,
-            [], # corrections handled inside core if needed
+            [correction.model_dump() for correction in corrections],
             user_id=user_id_str,
             user_name=current_user.full_name,
             streaming_id=streaming_id
@@ -414,7 +482,7 @@ async def process_statement(
             return {
                 "status": "failed",
                 "upload_id": streaming_id,
-                "message": result.get("error"),
+                "message": "Statement processing failed",
                 "transactions": [],
                 "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
             }
@@ -448,7 +516,7 @@ async def process_statement(
         return {
             "status": "failed",
             "upload_id": streaming_id,
-            "message": str(e),
+            "message": "Statement processing failed",
             "transactions": [],
             "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
@@ -464,7 +532,7 @@ async def process_statement(
         return {
             "status": "failed",
             "upload_id": streaming_id,
-            "message": str(e),
+            "message": "Statement processing failed",
             "transactions": [],
             "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
@@ -623,12 +691,13 @@ async def get_all_statements(current_user: models.User = Depends(auth_utils.get_
         statements = []
         for upload in uploads:
             # Get transaction count for this upload
+            stable_upload_id = upload.upload_id or str(upload.id)
             transaction_count = await models.Transaction.find(
-                models.Transaction.upload_id == str(upload.id)
+                models.Transaction.upload_id == stable_upload_id
             ).count()
             
             statements.append({
-                "upload_id": str(upload.id),
+                "upload_id": stable_upload_id,
                 "filename": upload.filename,
                 "bank_name": upload.bank_name,
                 "extraction_method": upload.extraction_method,
@@ -658,7 +727,10 @@ async def get_all_statements(current_user: models.User = Depends(auth_utils.get_
         }
 
 @app.get("/statement/{upload_id}")
-async def get_statement_details(upload_id: str):
+async def get_statement_details(
+    upload_id: str,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
     """
     Get detailed information for a specific statement
     
@@ -666,13 +738,12 @@ async def get_statement_details(upload_id: str):
     """
     try:
         # Get upload metadata
-        upload = await models.Upload.get(upload_id)
-        if not upload:
-            raise HTTPException(status_code=404, detail="Statement not found")
+        upload = await _owned_upload(upload_id, current_user)
+        stable_upload_id = upload.upload_id or str(upload.id)
         
         # Get all transactions for this upload
         transactions = await models.Transaction.find(
-            models.Transaction.upload_id == upload_id
+            models.Transaction.upload_id == stable_upload_id
         ).to_list()
         
         # Initialize decryptor if encryption is enabled
@@ -718,7 +789,7 @@ async def get_statement_details(upload_id: str):
         return {
             "status": "success",
             "statement": {
-                "upload_id": str(upload.id),
+                "upload_id": stable_upload_id,
                 "filename": upload.filename,
                 "bank_name": upload.bank_name,
                 "extraction_method": upload.extraction_method,
@@ -739,7 +810,10 @@ async def get_statement_details(upload_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/background-status/{upload_id}")
-async def get_background_status(upload_id: str):
+async def get_background_status(
+    upload_id: str,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
     """
     Check the status of background tasks for a specific upload.
     Frontend can poll this endpoint to know when background tasks complete.
@@ -750,12 +824,28 @@ async def get_background_status(upload_id: str):
         - status: "processing" | "completed" | "failed"
     """
     try:
-        upload = await models.Upload.get(upload_id)
+        upload = await models.Upload.find_one(
+            models.Upload.upload_id == upload_id,
+            models.Upload.user_id == str(current_user.user_id),
+        )
         if not upload:
-            raise HTTPException(status_code=404, detail="Upload not found")
+            job = await models.ProcessingJob.find_one(
+                models.ProcessingJob.upload_id == upload_id,
+                models.ProcessingJob.user_id == str(current_user.user_id),
+            )
+            if job:
+                return {
+                    "upload_id": upload_id,
+                    "db_save_completed": False,
+                    "vector_index_completed": False,
+                    "status": job.status,
+                    "stage": job.stage,
+                    "all_tasks_completed": job.status == "completed",
+                }
+        upload = upload or await _owned_upload(upload_id, current_user)
         
         return {
-            "upload_id": upload_id,
+            "upload_id": upload.upload_id or str(upload.id),
             "db_save_completed": upload.db_save_completed,
             "vector_index_completed": upload.vector_index_completed,
             "status": upload.status,
@@ -985,7 +1075,11 @@ async def get_analytics_by_category(
         
         for txn in transactions:
             category = txn.category or "Uncategorized"
-            amount = float(txn.debit) if float(txn.debit) > 0 else float(txn.credit)
+            # Category spending charts must exclude income and transfers.
+            debit = float(txn.debit)
+            if debit <= 0:
+                continue
+            amount = debit
             
             if category not in category_data:
                 category_data[category] = {
@@ -1216,7 +1310,10 @@ async def update_transaction_category(
 
 
 @app.delete("/statement/{upload_id}")
-async def delete_statement(upload_id: str):
+async def delete_statement(
+    upload_id: str,
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
     """
     Delete a statement and all its associated data from MongoDB and Pinecone
     
@@ -1230,22 +1327,21 @@ async def delete_statement(upload_id: str):
         logger.info(f"Starting deletion for upload_id: {upload_id}")
         
         # Step 1: Get upload metadata
-        upload = await models.Upload.get(upload_id)
-        if not upload:
-            raise HTTPException(status_code=404, detail="Statement not found")
+        upload = await _owned_upload(upload_id, current_user)
+        stable_upload_id = upload.upload_id or str(upload.id)
         
         filename = upload.filename
         
         # Step 2: Count transactions before deletion
         transaction_count = await models.Transaction.find(
-            models.Transaction.upload_id == upload_id
+            models.Transaction.upload_id == stable_upload_id
         ).count()
         
         logger.info(f"Found {transaction_count} transactions to delete for {filename}")
         
         # Step 3: Delete from Pinecone vector DB
         try:
-            await rag_pipeline.delete_transactions_by_upload_id(upload_id)
+            await rag_pipeline.delete_transactions_by_upload_id(stable_upload_id)
             logger.info(f"[OK] Deleted vectors from Pinecone for upload_id: {upload_id}")
         except Exception as e:
             logger.error(f"[WARN]  Failed to delete from Pinecone: {e}")
@@ -1253,7 +1349,7 @@ async def delete_statement(upload_id: str):
         
         # Step 4: Delete transactions from MongoDB
         delete_result = await models.Transaction.find(
-            models.Transaction.upload_id == upload_id
+            models.Transaction.upload_id == stable_upload_id
         ).delete()
         
         logger.info(f"[OK] Deleted {delete_result.deleted_count} transactions from MongoDB")

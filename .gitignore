@@ -134,3 +134,12 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Financial analyzer local/runtime files
+backend/__pycache__/
+backend/.pytest_cache/
+backend/logs/
+frontend/dist/
+*.pyc
+.venv/
+venv/
