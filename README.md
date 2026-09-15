@@ -176,6 +176,8 @@ uv run python e2e_agent.py --base-url http://localhost:3001 --email $env:E2E_TES
 
 The runner requires the `agent-browser` CLI and the hosted provider keys already described above. It must not be pointed at production accounts or real unredacted statements. For observability, enable LangSmith tracing in the runner environment (`LANGCHAIN_TRACING_V2=true`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT`) and instrument the application LLM wrapper with request IDs, provider/model, latency, token usage, fallback count, and estimated cost. Never record prompts containing raw account numbers or credentials.
 
+The repository also runs the provider-independent smoke suite through `.github/workflows/e2e-smoke.yml` on pushes to `main` and pull requests.
+
 ## Production checklist
 
 See the detailed [architecture review](docs/ARCHITECTURE_REVIEW.md) for the current workflow, E2E coverage, production risks, observability contract, and release gates.

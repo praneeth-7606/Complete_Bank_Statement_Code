@@ -60,8 +60,10 @@ class BrowserDriver:
         self.artifacts = artifacts
         self.session = session or f"finance-e2e-{uuid.uuid4().hex[:8]}"
         configured_binary = os.getenv("AGENT_BROWSER_BIN")
-        local_binary = Path(__file__).resolve().parents[1] / "frontend" / "node_modules" / ".bin" / "agent-browser.cmd"
-        self.binary = configured_binary or (str(local_binary) if local_binary.is_file() else "agent-browser")
+        local_bin_dir = Path(__file__).resolve().parents[1] / "frontend" / "node_modules" / ".bin"
+        local_candidates = [local_bin_dir / "agent-browser.cmd", local_bin_dir / "agent-browser"]
+        local_binary = next((candidate for candidate in local_candidates if candidate.is_file()), None)
+        self.binary = configured_binary or (str(local_binary) if local_binary else "agent-browser")
         self.artifacts.mkdir(parents=True, exist_ok=True)
 
     def run(self, step: str, *args: str, screenshot: bool = False) -> Evidence:
