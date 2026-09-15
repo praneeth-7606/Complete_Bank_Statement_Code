@@ -213,14 +213,21 @@ def run_public_smoke(driver: BrowserDriver, report: E2EReport) -> bool:
         ("public-login", ("open", f"{driver.base_url}/login"), True),
         ("public-login-snapshot", ("snapshot", "-i"), False),
         ("signup-navigation", ("find", "text", "Sign up for free →", "click"), False),
-        ("signup-url", ("wait", "--url", "**/signup"), False),
+        ("signup-url", ("get", "url"), False),
         ("signup-snapshot", ("snapshot", "-i"), False),
         ("protected-route-redirect", ("open", f"{driver.base_url}/dashboard"), False),
-        ("protected-login-url", ("wait", "--url", "**/login"), False),
+        ("protected-route-settle", ("wait", "500"), False),
+        ("protected-login-url", ("get", "url"), False),
     ]
     for step, args, screenshot in steps:
         evidence = driver.run(step, *args, screenshot=screenshot)
         report.evidence.append(evidence)
+        if evidence.ok and step == "signup-url" and "/signup" not in evidence.output:
+            evidence.ok = False
+            evidence.error = f"Expected signup URL, got: {evidence.output}"
+        if evidence.ok and step == "protected-login-url" and "/login" not in evidence.output:
+            evidence.ok = False
+            evidence.error = f"Expected login redirect, got: {evidence.output}"
         if not evidence.ok:
             report.issues.append(f"Public smoke check failed at {step}: {evidence.error or evidence.output}")
             return False
