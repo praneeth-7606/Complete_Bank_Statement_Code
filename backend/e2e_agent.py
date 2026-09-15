@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import subprocess
+import shutil
 import time
 import uuid
 from datetime import datetime, timezone
@@ -45,6 +46,10 @@ class E2EReport(BaseModel):
     evidence: List[Evidence] = Field(default_factory=list)
     issues: List[str] = Field(default_factory=list)
     recommendations: List[str] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=lambda: {
+        "llm_calls": 0, "input_tokens": 0, "output_tokens": 0,
+        "estimated_cost_usd": 0.0, "fallback_count": 0, "trace_url": None,
+    })
 
 
 class BrowserDriver:
@@ -184,6 +189,22 @@ JSON-like summary in your final message including passed, failed, blocked, evide
         return create_react_agent(model, tools, prompt=system)
 
 
+def _usage_metrics(result: Any) -> Dict[str, Any]:
+    """Extract provider usage when the selected LangChain integration exposes it."""
+    metrics = {"llm_calls": 0, "input_tokens": 0, "output_tokens": 0,
+               "estimated_cost_usd": 0.0, "fallback_count": 0}
+    messages = result.get("messages", []) if isinstance(result, dict) else []
+    for message in messages:
+        if getattr(message, "type", "") not in {"ai", "assistant"}:
+            continue
+        metrics["llm_calls"] += 1
+        usage = getattr(message, "usage_metadata", None) or {}
+        response_usage = getattr(message, "response_metadata", {}).get("token_usage", {})
+        metrics["input_tokens"] += int(usage.get("input_tokens", response_usage.get("prompt_tokens", 0)) or 0)
+        metrics["output_tokens"] += int(usage.get("output_tokens", response_usage.get("completion_tokens", 0)) or 0)
+    return metrics
+
+
 def run(base_url: str, email: str = "", password: str = "", statement: str = "") -> E2EReport:
     run_id = uuid.uuid4().hex
     artifacts = Path(os.getenv("E2E_ARTIFACT_DIR", "e2e-artifacts")) / run_id
@@ -197,9 +218,18 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "")
     statement_note = f"Use this test fixture if present: {statement}" if statement else "No statement fixture supplied; validate upload UI only."
     prompt = f"Run the complete application E2E suite against {base_url}. {credentials} {statement_note}"
     try:
+        if not shutil.which(driver.binary) and not Path(driver.binary).is_file():
+            report.status = "blocked"
+            report.issues.append(f"Browser CLI not found: {driver.binary}")
+            report.recommendations.append("Install agent-browser or set AGENT_BROWSER_BIN to its executable path.")
+            report.completed_at = datetime.now(timezone.utc).isoformat()
+            (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+            return report
         agent = create_agent(driver)
         result = agent.invoke({"messages": [{"role": "user", "content": prompt}]}, config={"recursion_limit": 80})
         report.evidence.append(Evidence(step="agent-summary", action="langchain-agent", ok=True, output=str(result)[-12000:]))
+        report.metrics.update(_usage_metrics(result))
+        report.metrics["trace_url"] = os.getenv("LANGCHAIN_TRACE_URL")
         report.status = "completed"
     except Exception as exc:
         report.status = "blocked" if "agent-browser" in str(exc).lower() else "failed"
