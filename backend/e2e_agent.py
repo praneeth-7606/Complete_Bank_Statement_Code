@@ -207,7 +207,27 @@ def _usage_metrics(result: Any) -> Dict[str, Any]:
     return metrics
 
 
-def run(base_url: str, email: str = "", password: str = "", statement: str = "") -> E2EReport:
+def run_public_smoke(driver: BrowserDriver, report: E2EReport) -> bool:
+    """Run provider-independent public checks so a bad LLM key cannot hide UI regressions."""
+    steps = [
+        ("public-login", ("open", f"{driver.base_url}/login"), True),
+        ("public-login-snapshot", ("snapshot", "-i"), False),
+        ("signup-navigation", ("find", "text", "Sign up for free →", "click"), False),
+        ("signup-url", ("wait", "--url", "**/signup"), False),
+        ("signup-snapshot", ("snapshot", "-i"), False),
+        ("protected-route-redirect", ("open", f"{driver.base_url}/dashboard"), False),
+        ("protected-login-url", ("wait", "--url", "**/login"), False),
+    ]
+    for step, args, screenshot in steps:
+        evidence = driver.run(step, *args, screenshot=screenshot)
+        report.evidence.append(evidence)
+        if not evidence.ok:
+            report.issues.append(f"Public smoke check failed at {step}: {evidence.error or evidence.output}")
+            return False
+    return True
+
+
+def run(base_url: str, email: str = "", password: str = "", statement: str = "", smoke_only: bool = False) -> E2EReport:
     run_id = uuid.uuid4().hex
     artifacts = Path(os.getenv("E2E_ARTIFACT_DIR", "e2e-artifacts")) / run_id
     driver = BrowserDriver(base_url, artifacts)
@@ -224,6 +244,14 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "")
             report.status = "blocked"
             report.issues.append(f"Browser CLI not found: {driver.binary}")
             report.recommendations.append("Install agent-browser or set AGENT_BROWSER_BIN to its executable path.")
+            report.completed_at = datetime.now(timezone.utc).isoformat()
+            (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+            return report
+        smoke_ok = run_public_smoke(driver, report)
+        if smoke_only:
+            report.status = "completed" if smoke_ok else "failed"
+            if not email or not password:
+                report.recommendations.append("Provide dedicated E2E_TEST_EMAIL and E2E_TEST_PASSWORD for authenticated scenarios.")
             report.completed_at = datetime.now(timezone.utc).isoformat()
             (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
             return report
@@ -255,8 +283,9 @@ def main() -> None:
     parser.add_argument("--email", default=os.getenv("E2E_TEST_EMAIL", ""))
     parser.add_argument("--password", default=os.getenv("E2E_TEST_PASSWORD", ""))
     parser.add_argument("--statement", default=os.getenv("E2E_STATEMENT_PATH", ""))
+    parser.add_argument("--smoke-only", action="store_true", help="Run deterministic public browser checks without an LLM provider")
     args = parser.parse_args()
-    print(run(args.base_url, args.email, args.password, args.statement).model_dump_json(indent=2))
+    print(run(args.base_url, args.email, args.password, args.statement, args.smoke_only).model_dump_json(indent=2))
 
 
 if __name__ == "__main__":

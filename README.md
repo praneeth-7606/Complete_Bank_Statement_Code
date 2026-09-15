@@ -163,6 +163,9 @@ Full API verification requires MongoDB and valid provider credentials. Expand co
 cd backend
 $env:E2E_FIXTURE_DIR = "e2e-fixtures"
 uv run python e2e_agent.py --base-url http://localhost:3001
+
+# Provider-independent public smoke check
+uv run python e2e_agent.py --base-url http://localhost:3001 --smoke-only
 ```
 
 For authenticated coverage, use a dedicated test account and a redacted PDF fixture only:
