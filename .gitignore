@@ -139,6 +139,7 @@ dist
 backend/__pycache__/
 backend/.pytest_cache/
 backend/logs/
+backend/e2e-artifacts/
 frontend/dist/
 *.pyc
 .venv/

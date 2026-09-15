@@ -59,7 +59,9 @@ class BrowserDriver:
         self.base_url = base_url.rstrip("/")
         self.artifacts = artifacts
         self.session = session or f"finance-e2e-{uuid.uuid4().hex[:8]}"
-        self.binary = os.getenv("AGENT_BROWSER_BIN", "agent-browser")
+        configured_binary = os.getenv("AGENT_BROWSER_BIN")
+        local_binary = Path(__file__).resolve().parents[1] / "frontend" / "node_modules" / ".bin" / "agent-browser.cmd"
+        self.binary = configured_binary or (str(local_binary) if local_binary.is_file() else "agent-browser")
         self.artifacts.mkdir(parents=True, exist_ok=True)
 
     def run(self, step: str, *args: str, screenshot: bool = False) -> Evidence:
@@ -233,7 +235,15 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "")
         report.status = "completed"
     except Exception as exc:
         report.status = "blocked" if "agent-browser" in str(exc).lower() else "failed"
+        report.evidence.append(Evidence(
+            step="agent-bootstrap", action="langchain-agent", ok=False, error=str(exc)
+        ))
         report.issues.append(str(exc))
+        if "api key" in str(exc).lower() or "provider" in str(exc).lower():
+            report.status = "blocked"
+            report.recommendations.append(
+                "Configure a valid GEMINI_API_KEY, or configure GROQ_API_KEY for the Gemini-to-Groq fallback, then rerun."
+            )
     report.completed_at = datetime.now(timezone.utc).isoformat()
     (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
     return report
