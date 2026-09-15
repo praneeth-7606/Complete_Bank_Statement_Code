@@ -178,6 +178,8 @@ The runner requires the `agent-browser` CLI and the hosted provider keys already
 
 ## Production checklist
 
+See the detailed [architecture review](docs/ARCHITECTURE_REVIEW.md) for the current workflow, E2E coverage, production risks, observability contract, and release gates.
+
 - Use managed MongoDB with TLS, backups, indexes, and least-privilege credentials.
 - Replace in-process background tasks with a durable Redis/Celery, queue, or MongoDB job-claim worker before high-volume deployment.
 - Add provider timeouts, exponential backoff with jitter, circuit breakers, quota telemetry, and correlation IDs.
