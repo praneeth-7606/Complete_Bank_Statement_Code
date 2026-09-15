@@ -1,0 +1,223 @@
+"""Application-specific browser E2E agent.
+
+This is intentionally separate from the API runtime. It drives a persistent
+agent-browser session through LangChain tools and writes an evidence-rich JSON
+report. The browser CLI is an explicit dependency so the same runner works in
+CI, locally, and against a deployed frontend.
+
+Usage:
+    python e2e_agent.py --base-url http://localhost:3001
+    python e2e_agent.py --base-url https://your-app.example --email ... --password ...
+"""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import subprocess
+import time
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+
+class Evidence(BaseModel):
+    step: str
+    action: str
+    ok: bool
+    output: str = ""
+    duration_ms: int = 0
+    artifact: Optional[str] = None
+    error: Optional[str] = None
+
+
+class E2EReport(BaseModel):
+    run_id: str
+    base_url: str
+    started_at: str
+    completed_at: Optional[str] = None
+    status: str = "running"
+    scenarios: List[str] = Field(default_factory=list)
+    evidence: List[Evidence] = Field(default_factory=list)
+    issues: List[str] = Field(default_factory=list)
+    recommendations: List[str] = Field(default_factory=list)
+
+
+class BrowserDriver:
+    """Small, auditable adapter around the agent-browser CLI."""
+
+    def __init__(self, base_url: str, artifacts: Path, session: Optional[str] = None):
+        self.base_url = base_url.rstrip("/")
+        self.artifacts = artifacts
+        self.session = session or f"finance-e2e-{uuid.uuid4().hex[:8]}"
+        self.binary = os.getenv("AGENT_BROWSER_BIN", "agent-browser")
+        self.artifacts.mkdir(parents=True, exist_ok=True)
+
+    def run(self, step: str, *args: str, screenshot: bool = False) -> Evidence:
+        started = time.perf_counter()
+        command = [self.binary, "--session", self.session, *args]
+        try:
+            result = subprocess.run(command, capture_output=True, text=True, timeout=45)
+            output = (result.stdout or result.stderr or "").strip()
+            artifact = None
+            if screenshot:
+                artifact_path = self.artifacts / f"{len(list(self.artifacts.glob('*.png'))):03d}-{step}.png"
+                shot = subprocess.run(
+                    [self.binary, "--session", self.session, "screenshot", str(artifact_path)],
+                    capture_output=True, text=True, timeout=45,
+                )
+                if shot.returncode == 0 and artifact_path.exists():
+                    artifact = str(artifact_path)
+            ok = result.returncode == 0
+            return Evidence(
+                step=step, action=" ".join(args), ok=ok, output=output[-8000:],
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                artifact=artifact, error=None if ok else output[-2000:],
+            )
+        except Exception as exc:
+            return Evidence(
+                step=step, action=" ".join(args), ok=False,
+                duration_ms=round((time.perf_counter() - started) * 1000), error=str(exc),
+            )
+
+
+def build_tools(driver: BrowserDriver):
+    """Create typed LangChain tools for browser actions."""
+    try:
+        from langchain_core.tools import tool
+    except ImportError as exc:
+        raise RuntimeError("Install backend dependencies before running the E2E agent") from exc
+
+    @tool
+    def open_page(path: str) -> str:
+        """Open an application path and return the browser result."""
+        target = path if path.startswith("http") else f"{driver.base_url}/{path.lstrip('/')}"
+        return driver.run("open-page", "open", target, screenshot=True).model_dump_json()
+
+    @tool
+    def snapshot() -> str:
+        """Capture interactive page elements and their current refs."""
+        return driver.run("snapshot", "snapshot", "-i").model_dump_json()
+
+    @tool
+    def click(ref_or_locator: str) -> str:
+        """Click an agent-browser ref such as @e1 or a semantic locator expression."""
+        args = ["click", ref_or_locator] if ref_or_locator.startswith("@") else ["find", "text", ref_or_locator, "click"]
+        return driver.run("click", *args).model_dump_json()
+
+    @tool
+    def fill(locator: str, value: str) -> str:
+        """Fill a form field by label, placeholder, CSS selector, or browser ref."""
+        args = ["fill", locator, value] if locator.startswith("@") else ["find", "label", locator, "fill", value]
+        return driver.run("fill", *args).model_dump_json()
+
+    @tool
+    def wait_for(target: str) -> str:
+        """Wait for a URL pattern, selector/ref, or milliseconds."""
+        args = ["wait", "--url", target] if target.startswith("**/") else ["wait", target]
+        return driver.run("wait", *args).model_dump_json()
+
+    @tool
+    def read_page() -> str:
+        """Read visible page text for assertions and report evidence."""
+        return driver.run("read-page", "get", "text", "body").model_dump_json()
+
+    @tool
+    def capture_screenshot(name: str = "manual") -> str:
+        """Capture a named screenshot artifact."""
+        return driver.run(name, "screenshot", str(driver.artifacts / f"{name}.png")).model_dump_json()
+
+    @tool
+    def upload_file(ref_or_locator: str, file_path: str) -> str:
+        """Upload a test PDF through a file input; only an existing PDF is allowed."""
+        candidate = Path(file_path).expanduser().resolve()
+        if candidate.suffix.lower() != ".pdf":
+            return json.dumps({"ok": False, "error": "Only PDF test fixtures are allowed"})
+        fixture_root = Path(os.getenv("E2E_FIXTURE_DIR", "e2e-fixtures")).resolve()
+        if not candidate.is_file() or (candidate != fixture_root and fixture_root not in candidate.parents):
+            return json.dumps({"ok": False, "error": "Fixture must be an existing PDF under E2E_FIXTURE_DIR"})
+        args = ["upload", ref_or_locator, str(candidate)]
+        return driver.run("upload-file", *args, screenshot=True).model_dump_json()
+
+    return [open_page, snapshot, click, fill, wait_for, read_page, capture_screenshot, upload_file]
+
+
+def create_agent(driver: BrowserDriver):
+    """Build the LangChain agent using the current project's hosted LLM router."""
+    try:
+        from app.llm_provider import build_llm
+        from app.config import settings
+    except ImportError as exc:
+        raise RuntimeError("Run this command from backend with the project dependencies installed") from exc
+
+    system = """You are the Financial Statement Analyzer E2E test agent.
+Use browser tools only. Re-snapshot after every navigation or DOM change because refs expire.
+Test each scenario in order and collect evidence. Never invent a success: a scenario passes
+only when the visible UI, URL, and expected response are confirmed. Record the first broken
+boundary and continue with independent scenarios. Do not submit real financial data.
+
+Application-specific scenarios:
+1. Public login page renders; signup navigation works; protected pages redirect unauthenticated users.
+2. With supplied test credentials, login redirects to the authenticated dashboard.
+3. Dashboard, statements, analytics, transactions, corrections, and chat pages render without console-visible errors.
+4. Upload workflow shows validation for a non-PDF and starts processing for a supplied test PDF.
+5. Processing status/logs update and statement results show transactions, categories, totals, and balances.
+6. Transaction filters and category correction update the visible row and persist after refresh.
+7. Chat accepts a safe transaction query and renders a response or a clear backend error state.
+8. Logout clears the session and protected routes redirect to login.
+
+Use semantic locators when stable and screenshots at scenario boundaries. Finish with a concise
+JSON-like summary in your final message including passed, failed, blocked, evidence, and fixes.
+"""
+    model = build_llm(settings.GEMINI_MODEL, temperature=0)
+    tools = build_tools(driver)
+    try:
+        from langchain.agents import create_agent
+        return create_agent(model=model, tools=tools, system_prompt=system)
+    except ImportError:
+        # Compatibility for older lockfiles that still expose the LangGraph API.
+        from langgraph.prebuilt import create_react_agent
+        return create_react_agent(model, tools, prompt=system)
+
+
+def run(base_url: str, email: str = "", password: str = "", statement: str = "") -> E2EReport:
+    run_id = uuid.uuid4().hex
+    artifacts = Path(os.getenv("E2E_ARTIFACT_DIR", "e2e-artifacts")) / run_id
+    driver = BrowserDriver(base_url, artifacts)
+    report = E2EReport(
+        run_id=run_id, base_url=base_url, started_at=datetime.now(timezone.utc).isoformat(),
+        scenarios=["public-auth", "protected-navigation", "dashboard", "upload-processing",
+                   "transactions-corrections", "chat-rag", "logout"],
+    )
+    credentials = "Test credentials are available." if email and password else "No credentials supplied; stop at public/protected checks."
+    statement_note = f"Use this test fixture if present: {statement}" if statement else "No statement fixture supplied; validate upload UI only."
+    prompt = f"Run the complete application E2E suite against {base_url}. {credentials} {statement_note}"
+    try:
+        agent = create_agent(driver)
+        result = agent.invoke({"messages": [{"role": "user", "content": prompt}]}, config={"recursion_limit": 80})
+        report.evidence.append(Evidence(step="agent-summary", action="langchain-agent", ok=True, output=str(result)[-12000:]))
+        report.status = "completed"
+    except Exception as exc:
+        report.status = "blocked" if "agent-browser" in str(exc).lower() else "failed"
+        report.issues.append(str(exc))
+    report.completed_at = datetime.now(timezone.utc).isoformat()
+    (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    return report
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Run the Financial Statement Analyzer LangChain E2E agent")
+    parser.add_argument("--base-url", default=os.getenv("E2E_BASE_URL", "http://localhost:3001"))
+    parser.add_argument("--email", default=os.getenv("E2E_TEST_EMAIL", ""))
+    parser.add_argument("--password", default=os.getenv("E2E_TEST_PASSWORD", ""))
+    parser.add_argument("--statement", default=os.getenv("E2E_STATEMENT_PATH", ""))
+    args = parser.parse_args()
+    print(run(args.base_url, args.email, args.password, args.statement).model_dump_json(indent=2))
+
+
+if __name__ == "__main__":
+    main()

@@ -155,6 +155,24 @@ npm run build
 
 Full API verification requires MongoDB and valid provider credentials. Expand coverage with authenticated API tests, OCR fixtures, provider-failure simulations, duplicate uploads, authorization-isolation tests, and upload-to-chat end-to-end tests.
 
+## Application-specific E2E agent
+
+`backend/e2e_agent.py` is a LangChain browser agent for the complete user journey: public authentication, protected-route behavior, dashboard and analytics rendering, PDF validation/upload, processing status, transaction filtering and correction, chat, and logout. Every browser action records its result, latency, and optional screenshot under `backend/e2e-artifacts/<run-id>/`.
+
+```powershell
+cd backend
+$env:E2E_FIXTURE_DIR = "e2e-fixtures"
+uv run python e2e_agent.py --base-url http://localhost:3001
+```
+
+For authenticated coverage, use a dedicated test account and a redacted PDF fixture only:
+
+```powershell
+uv run python e2e_agent.py --base-url http://localhost:3001 --email $env:E2E_TEST_EMAIL --password $env:E2E_TEST_PASSWORD --statement .\e2e-fixtures\sample.pdf
+```
+
+The runner requires the `agent-browser` CLI and the hosted provider keys already described above. It must not be pointed at production accounts or real unredacted statements. For observability, enable LangSmith tracing in the runner environment (`LANGCHAIN_TRACING_V2=true`, `LANGCHAIN_API_KEY`, and `LANGCHAIN_PROJECT`) and instrument the application LLM wrapper with request IDs, provider/model, latency, token usage, fallback count, and estimated cost. Never record prompts containing raw account numbers or credentials.
+
 ## Production checklist
 
 - Use managed MongoDB with TLS, backups, indexes, and least-privilege credentials.
