@@ -7,6 +7,10 @@ class Settings(BaseSettings):
         GROQ_API_KEY: str = ""
         GROQ_MODEL: str = "openai/gpt-oss-20b"
         GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
+        ZAI_API_KEY: str = ""
+        ZAI_MODEL: str = "glm-4.7-flash"
+        ZAI_VISION_MODEL: str = "glm-4.6v-flash"
+        ZAI_BASE_URL: str = "https://api.z.ai/api/paas/v4"
         MONGO_URI: str = ""
         SECRET_KEY: str = ""
         GOOGLE_CLIENT_ID: str = ""  # Optional, for Google OAuth
@@ -18,6 +22,7 @@ class Settings(BaseSettings):
         
         # Mistral OCR Configuration
         MISTRAL_API_KEY: str = ""  # Mistral API key for OCR 3 extraction
+        MISTRAL_OCR_MODEL: str = "mistral-ocr-latest"
 
         # Data Encryption Configuration (for database encryption)
         ENCRYPTION_KEY: str = ""  # Base64-encoded 256-bit key

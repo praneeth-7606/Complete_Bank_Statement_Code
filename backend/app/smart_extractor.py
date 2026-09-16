@@ -42,6 +42,8 @@ from langgraph.graph import StateGraph, END
 
 # LangChain Imports
 from langchain_google_genai import ChatGoogleGenerativeAI
+from langchain_openai import ChatOpenAI
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
@@ -334,12 +336,23 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         # Initialize Gemini for Fallback
         if settings.GEMINI_API_KEY:
             genai.configure(api_key=settings.GEMINI_API_KEY)
-            self.gemini_model = genai.GenerativeModel('gemini-2.5-flash')
+            self.gemini_model = genai.GenerativeModel(settings.GEMINI_MODEL)
         else:
             logger.warning("GEMINI_API_KEY not set. Gemini Vision fallback will unavailable.")
             self.gemini_model = None
 
-        logger.info("[OK] Mistral OCR 3 Extractor ready (with Gemini fallback)")
+        if settings.ZAI_API_KEY:
+            self.zai_vision_model = ChatOpenAI(
+                model=settings.ZAI_VISION_MODEL,
+                api_key=settings.ZAI_API_KEY,
+                base_url=settings.ZAI_BASE_URL,
+                temperature=0,
+                max_retries=0,
+            )
+        else:
+            self.zai_vision_model = None
+
+        logger.info("[OK] Mistral OCR 3 Extractor ready (Gemini Vision -> Z.AI Vision fallback)")
 
     # ----------------------------------------------------------
     # PUBLIC: main entry point (same signature as old extractor)
@@ -504,17 +517,27 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             return state
 
         def node_ocr_fallback(state: ProcessingState) -> ProcessingState:
-            logger.info("   [FALLBACK] [4/5] NODE: Fallback -> Extracting via Gemini Vision (Agent)...")
+            logger.info("   [FALLBACK] [4/5] NODE: Vision fallback chain (Gemini -> Z.AI -> deterministic PDF text)...")
             t_start = time.time()
-            try:
-                if not self.gemini_model:
-                     state["errors"].append("Gemini disabled (No API Key).")
-                     return state
-                doc_type, txns = self._extract_with_gemini_vision(state["file_bytes"], state["password"])
-                state["raw_ocr_output"] = {"transactions": txns}
-                state["extraction_method"] = "GEMINI_VISION_FALLBACK"
-            except Exception as e:
-                state["errors"].append(f"Gemini API Error: {str(e)}")
+            fallback_chain = [
+                ("GEMINI_VISION_FALLBACK", self._extract_with_gemini_vision, bool(self.gemini_model)),
+                ("ZAI_GLM_VISION_FALLBACK", self._extract_with_zai_vision, bool(self.zai_vision_model)),
+                ("PDF_TEXT_DETERMINISTIC_FALLBACK", self._extract_with_deterministic_pdf_text, True),
+            ]
+            for method, extractor, enabled in fallback_chain:
+                if not enabled:
+                    continue
+                try:
+                    doc_type, txns = extractor(state["file_bytes"], state["password"])
+                    if txns:
+                        state["raw_ocr_output"] = {"transactions": txns}
+                        state["extraction_method"] = method
+                        logger.info("   [SUCCESS] %s returned %d transactions", method, len(txns))
+                        break
+                except Exception as e:
+                    state["errors"].append(f"{method} Error: {str(e)}")
+            else:
+                state["errors"].append("All OCR fallbacks returned no transactions.")
             
             state["timing"]["ocr_fallback"] = time.time() - t_start
             return state
@@ -1104,7 +1127,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 logger.info(f"   [ATTEMPT] {attempt}/{max_retries} - Specialized extraction...")
                 
                 ocr_response = self.client.ocr.process(
-                    model="mistral-ocr-latest",
+                    model=settings.MISTRAL_OCR_MODEL,
                     document={
                         "type": "document_url",
                         "document_url": document_data_uri,
@@ -1196,7 +1219,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 logger.info(f"   [RETRY] Attempt {attempt}/{max_retries}...")
 
                 ocr_response = self.client.ocr.process(
-                    model="mistral-ocr-latest",
+                    model=settings.MISTRAL_OCR_MODEL,
                     document={
                         "type": "document_url",
                         "document_url": document_data_uri,
@@ -1525,6 +1548,73 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         except Exception as e:
             logger.error(f"[FAIL] Gemini vision extraction failed entirely: {e}")
             return "unknown", []
+
+    def _extract_with_zai_vision(self, pdf_bytes: bytes, password: str) -> Tuple[str, List[Dict]]:
+        """Extract page images through Z.AI's OpenAI-compatible vision endpoint."""
+        if not self.zai_vision_model:
+            return "unknown", []
+        images = self._pdf_to_images(pdf_bytes, password)
+        all_transactions: List[Dict] = []
+        doc_type_found = ""
+        for page_num, image in enumerate(images, 1):
+            buffer = io.BytesIO()
+            image.save(buffer, format="JPEG", quality=85, optimize=True)
+            image_uri = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+            prompt = self.EXTRACTION_PROMPT + f"\n\nThis is page {page_num}. Return only JSON."
+            response = self.zai_vision_model.invoke([
+                HumanMessage(content=[
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_uri}},
+                ])
+            ])
+            content = response.content
+            if isinstance(content, list):
+                content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+            doc_type, page_txns = self._parse_json_response(str(content))
+            if doc_type and doc_type != "unknown" and not doc_type_found:
+                doc_type_found = doc_type
+            all_transactions.extend(page_txns)
+        return doc_type_found or "unknown", all_transactions
+
+    def _extract_with_deterministic_pdf_text(self, pdf_bytes: bytes, password: str) -> Tuple[str, List[Dict]]:
+        """Conservative fallback for text-based statements when all vision APIs fail."""
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        if doc.needs_pass and password:
+            doc.authenticate(password)
+        transactions: List[Dict] = []
+        date_pattern = re.compile(r"^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(.*)$")
+        amount_pattern = re.compile(r"(?<![A-Za-z0-9])[₹$]?\s*([\d,]+(?:\.\d{1,2})?)(?![A-Za-z0-9])")
+        for page in doc:
+            for line in (page.get_text("text") or "").splitlines():
+                match = date_pattern.match(line)
+                amounts = list(amount_pattern.finditer(line))
+                if not match or not amounts:
+                    continue
+                raw_date = match.group(1).replace("-", "/").split("/")
+                if len(raw_date) != 3:
+                    continue
+                day, month, year = (part.zfill(2) for part in raw_date)
+                if len(year) == 2:
+                    year = "20" + year
+                parsed_date = self._parse_date(f"{day}/{month}/{year}")
+                if not parsed_date:
+                    continue
+                amount_match = amounts[-2] if len(amounts) >= 2 else amounts[-1]
+                amount = float(amount_match.group(1).replace(",", ""))
+                description = line[match.end(1):amount_match.start()].strip(" -|\t")[:200]
+                if not description or amount <= 0:
+                    continue
+                is_credit = any(keyword in description.lower() for keyword in self.credit_keywords)
+                transactions.append({
+                    "date": parsed_date,
+                    "description": description,
+                    "debit": 0.0 if is_credit else amount,
+                    "credit": amount if is_credit else 0.0,
+                    "amount": amount,
+                    "balance": 0.0,
+                })
+        doc.close()
+        return "bank_statement", transactions
 
     def _pdf_to_images(self, pdf_bytes: bytes, password: str) -> List[Image.Image]:
         """Convert PDF to a list of PIL Images."""

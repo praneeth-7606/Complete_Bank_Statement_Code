@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from . import models
 from .config import settings
-from .llm_provider import build_llm, build_structured_llm
+from .llm_provider import build_chat_llm, build_llm, build_structured_llm
 from .vector_store_pinecone import PineconeVectorStore
 from .rag_logger import rag_logger
 
@@ -234,7 +234,7 @@ RECENT CONVERSATION:
 
 class PlanningAgent:
     def __init__(self):
-        self.llm = build_llm(settings.GEMINI_MODEL, temperature=0.0)
+        self.llm = build_chat_llm(settings.GEMINI_MODEL, temperature=0.0)
         self.structured_llm = build_structured_llm(QueryPlan, settings.GEMINI_MODEL, temperature=0.0)
 
     def _build_system_prompt(self, history: List[Dict]) -> str:
@@ -565,7 +565,7 @@ REQUIRED JSON FORMAT:
 
 class ResponseGenerator:
     async def generate(self, query: str, context: FinancialContext, plan: QueryPlan) -> Dict:
-        llm = build_llm(settings.GEMINI_MODEL, temperature=0.1)
+        llm = build_chat_llm(settings.GEMINI_MODEL, temperature=0.1)
         
         raw_txns = context.raw_docs[:200] # Safe token limit for Gemini 2.5 Flash
         

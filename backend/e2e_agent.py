@@ -158,7 +158,7 @@ def build_tools(driver: BrowserDriver):
 def create_agent(driver: BrowserDriver):
     """Build the LangChain agent using the current project's hosted LLM router."""
     try:
-        from app.llm_provider import build_llm
+        from app.llm_provider import build_chat_llm
         from app.config import settings
     except ImportError as exc:
         raise RuntimeError("Run this command from backend with the project dependencies installed") from exc
@@ -182,7 +182,7 @@ Application-specific scenarios:
 Use semantic locators when stable and screenshots at scenario boundaries. Finish with a concise
 JSON-like summary in your final message including passed, failed, blocked, evidence, and fixes.
 """
-    model = build_llm(settings.GEMINI_MODEL, temperature=0)
+    model = build_chat_llm(settings.GEMINI_MODEL, temperature=0)
     tools = build_tools(driver)
     try:
         from langchain.agents import create_agent

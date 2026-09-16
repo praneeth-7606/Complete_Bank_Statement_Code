@@ -102,6 +102,11 @@ GROQ_API_KEY=your_groq_key
 GEMINI_MODEL=gemini-2.5-flash
 GROQ_MODEL=openai/gpt-oss-20b
 GROQ_BASE_URL=https://api.groq.com/openai/v1
+ZAI_API_KEY=your_zai_key
+ZAI_MODEL=glm-4.7-flash
+ZAI_VISION_MODEL=glm-4.6v-flash
+ZAI_BASE_URL=https://api.z.ai/api/paas/v4
+MISTRAL_OCR_MODEL=mistral-ocr-latest
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_ENVIRONMENT=us-east-1
 PINECONE_INDEX_NAME=financial-transactions
@@ -136,6 +141,8 @@ Statements: `POST /process-statement/`, `POST /process-multiple-statements/`, `G
 Transactions and analytics: `GET /api/transactions/filtered`, `PUT /api/transactions/{transaction_id}/category`, `POST /correct-transaction/`, `GET /api/dashboard/stats`, `GET /api/analytics/by-category`, `GET /api/analytics/by-date`.
 
 AI: `POST /chat`. Optional investment routes are mounted under the investment router for chat, history clearing, and memory statistics.
+
+LLM routing: structured extraction/categorization uses Gemini Flash → Groq GPT-OSS-20B → Z.AI GLM-4.7-Flash. Chat/RAG uses Groq GPT-OSS-20B → Gemini Flash → Z.AI GLM-4.7-Flash. OCR uses the configured Mistral OCR 3-compatible model → Gemini Vision → Z.AI GLM-4.6V-Flash → conservative deterministic PDF text parsing.
 
 All statement, transaction, analytics, chat, and log operations must be scoped to the authenticated user.
 

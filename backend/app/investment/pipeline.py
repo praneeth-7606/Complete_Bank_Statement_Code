@@ -16,7 +16,7 @@ from .groww_client import groww_client
 from .response_formatter import investment_formatter
 from .memory import conversation_memory
 from ..config import settings
-from ..llm_provider import build_llm
+from ..llm_provider import build_chat_llm
 
 logger = logging.getLogger(__name__)
 
@@ -172,7 +172,7 @@ GROWW_TOOLS = [
 # ════════════════════════════════════════════════════════════════════════════
 
 def _build_llm():
-    return build_llm(settings.GEMINI_MODEL, temperature=0)
+    return build_chat_llm(settings.GEMINI_MODEL, temperature=0)
 
 
 def _build_agent(tools: list, llm, conversation_context: str = ""):
