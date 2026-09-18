@@ -64,11 +64,11 @@ async def login(credentials: models.UserLogin):
             detail="Incorrect email or password"
         )
     
-    # Check if user has a password (not OAuth-only user)
+    # All supported accounts authenticate with an email/password credential.
     if not user.hashed_password:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This account uses Google Sign-In. Please login with Google."
+            detail="This account does not have a password configured. Please contact support."
         )
     
     # Verify password
@@ -88,45 +88,6 @@ async def login(credentials: models.UserLogin):
     # Update last login
     user.last_login = datetime.utcnow()
     await user.save()
-    
-    # Create tokens
-    tokens = auth_utils.create_tokens_for_user(user)
-    
-    return tokens
-
-
-@router.post("/google", response_model=models.TokenResponse)
-async def google_auth(auth_request: models.GoogleAuthRequest):
-    """Login or signup with Google OAuth"""
-    
-    # Verify Google token
-    google_user_info = await auth_utils.verify_google_token(auth_request.token)
-    
-    # Check if user exists
-    user = await models.User.find_one(models.User.email == google_user_info["email"])
-    
-    if user:
-        # Existing user - update Google info if needed
-        if not user.google_id:
-            user.google_id = google_user_info["google_id"]
-        if google_user_info.get("profile_picture"):
-            user.profile_picture = google_user_info["profile_picture"]
-        user.is_verified = True
-        user.last_login = datetime.utcnow()
-        await user.save()
-    else:
-        # New user - create account
-        user = models.User(
-            email=google_user_info["email"],
-            full_name=google_user_info["full_name"],
-            google_id=google_user_info["google_id"],
-            profile_picture=google_user_info.get("profile_picture"),
-            is_active=True,
-            is_verified=True,
-            created_at=datetime.utcnow(),
-            last_login=datetime.utcnow()
-        )
-        await user.insert()
     
     # Create tokens
     tokens = auth_utils.create_tokens_for_user(user)
@@ -169,7 +130,6 @@ async def get_current_user_info(current_user: models.User = Depends(auth_utils.g
         user_id=current_user.user_id,
         email=current_user.email,
         full_name=current_user.full_name,
-        profile_picture=current_user.profile_picture,
         is_verified=current_user.is_verified,
         created_at=current_user.created_at
     )

@@ -4,7 +4,7 @@ An AI-powered financial workspace that converts bank-statement PDFs into searcha
 
 ## Features
 
-- Email/password authentication and optional Google OAuth.
+- Email/password authentication.
 - Single and batch PDF uploads, including protected PDFs.
 - File type, size, page-count, ownership, and duplicate-hash validation.
 - Multi-bank statement extraction, transaction normalization, balance verification, and decimal-safe totals.
@@ -115,7 +115,7 @@ PINECONE_ENVIRONMENT=us-east-1
 PINECONE_INDEX_NAME=financial-transactions
 ```
 
-Google OAuth, encryption, Groww credentials, upload limits, and other optional settings are documented in `backend/.env.example`. Never commit `backend/.env`, expose keys in frontend code, or print secrets in logs.
+Encryption, Groww credentials, upload limits, and other optional settings are documented in `backend/.env.example`. Never commit `backend/.env`, expose keys in frontend code, or print secrets in logs.
 
 ## Run locally
 

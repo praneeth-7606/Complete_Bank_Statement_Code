@@ -4,7 +4,6 @@ import { motion } from 'framer-motion'
 import { Mail, Lock, LogIn, DollarSign, TrendingUp, Shield, Zap } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 import toast from 'react-hot-toast'
-import { GoogleLogin } from '@react-oauth/google'
 import { Button, Input, Card } from '../components/ui'
 
 const Login = () => {
@@ -12,7 +11,7 @@ const Login = () => {
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [focusedField, setFocusedField] = useState(null)
-  const { login, googleLogin } = useAuth()
+  const { login } = useAuth()
   const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
@@ -29,25 +28,6 @@ const Login = () => {
     }
 
     setLoading(false)
-  }
-
-  const handleGoogleSuccess = async (credentialResponse) => {
-    setLoading(true)
-
-    const result = await googleLogin(credentialResponse.credential)
-
-    if (result.success) {
-      toast.success('Welcome! 🎉')
-      navigate('/')
-    } else {
-      toast.error(result.error)
-    }
-
-    setLoading(false)
-  }
-
-  const handleGoogleError = () => {
-    toast.error('Google login failed. Please try again.')
   }
 
   const features = [
@@ -245,36 +225,6 @@ const Login = () => {
                 </Button>
               </motion.div>
             </form>
-
-            {/* Google Login - Only show if configured */}
-            {import.meta.env.VITE_GOOGLE_CLIENT_ID && (
-              <>
-                <div className="relative my-8">
-                  <div className="absolute inset-0 flex items-center">
-                    <div className="w-full border-t border-white/10"></div>
-                  </div>
-                  <div className="relative flex justify-center text-sm">
-                    <span className="px-4 bg-[#0a0a1a] text-gray-400 font-medium">Or continue with</span>
-                  </div>
-                </div>
-
-                <motion.div
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  transition={{ delay: 0.6 }}
-                  className="flex justify-center"
-                >
-                  <GoogleLogin
-                    onSuccess={handleGoogleSuccess}
-                    onError={handleGoogleError}
-                    theme="outline"
-                    size="large"
-                    text="signin_with"
-                    shape="rectangular"
-                  />
-                </motion.div>
-              </>
-            )}
 
             {/* Signup Link */}
             <motion.p

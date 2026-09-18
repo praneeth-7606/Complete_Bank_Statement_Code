@@ -4,6 +4,7 @@ import axios from 'axios'
 import { API_BASE_URL } from '../services/api'
 
 const AuthContext = createContext(null)
+const AUTH_REQUEST_TIMEOUT_MS = 15000
 
 export const useAuth = () => {
   const context = useContext(AuthContext)
@@ -38,7 +39,8 @@ export const AuthProvider = ({ children }) => {
       if (storedToken) {
         try {
           const response = await axios.get(`${API_URL}/auth/me`, {
-            headers: { Authorization: `Bearer ${storedToken}` }
+            headers: { Authorization: `Bearer ${storedToken}` },
+            timeout: AUTH_REQUEST_TIMEOUT_MS
           })
           setUser(response.data)
           setToken(storedToken)
@@ -68,7 +70,7 @@ export const AuthProvider = ({ children }) => {
         email,
         password,
         full_name: fullName
-      })
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS })
       
       const { access_token, refresh_token, user: userData } = response.data
       
@@ -91,7 +93,7 @@ export const AuthProvider = ({ children }) => {
       const response = await axios.post(`${API_URL}/auth/login`, {
         email,
         password
-      })
+      }, { timeout: AUTH_REQUEST_TIMEOUT_MS })
       
       const { access_token, refresh_token, user: userData } = response.data
       
@@ -109,31 +111,9 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
-  const googleLogin = async (googleToken) => {
-    try {
-      const response = await axios.post(`${API_URL}/auth/google`, {
-        token: googleToken
-      })
-      
-      const { access_token, refresh_token, user: userData } = response.data
-      
-      localStorage.setItem('access_token', access_token)
-      localStorage.setItem('refresh_token', refresh_token)
-      setToken(access_token)
-      setUser(userData)
-      
-      return { success: true }
-    } catch (error) {
-      return {
-        success: false,
-        error: error.response?.data?.detail || 'Google login failed'
-      }
-    }
-  }
-
   const logout = async () => {
     try {
-      await axios.post(`${API_URL}/auth/logout`)
+      await axios.post(`${API_URL}/auth/logout`, null, { timeout: AUTH_REQUEST_TIMEOUT_MS })
     } catch (error) {
       console.error('Logout error:', error)
     } finally {
@@ -152,7 +132,6 @@ export const AuthProvider = ({ children }) => {
     token,
     signup,
     login,
-    googleLogin,
     logout,
     isAuthenticated: !!user
   }

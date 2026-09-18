@@ -16,12 +16,8 @@ class User(Document):
     
     # User credentials
     email: EmailStr
-    hashed_password: Optional[str] = None  # None for Google OAuth users
+    hashed_password: Optional[str] = None
     full_name: str
-    
-    # OAuth fields
-    google_id: Optional[str] = None
-    profile_picture: Optional[str] = None
     
     # Account status
     is_active: bool = True
@@ -33,7 +29,7 @@ class User(Document):
     
     class Settings:
         name = "users"
-        indexes = ["email", "google_id"]
+        indexes = ["email"]
 
 class Transaction(Document):
     """Represents a single transaction document in the database."""
@@ -256,10 +252,6 @@ class UserLogin(BaseModel):
     email: EmailStr
     password: str
 
-class GoogleAuthRequest(BaseModel):
-    """Model for Google OAuth login"""
-    token: str  # Google ID token
-
 class TokenResponse(BaseModel):
     """Model for token response"""
     access_token: str
@@ -272,6 +264,5 @@ class UserResponse(BaseModel):
     user_id: str
     email: str
     full_name: str
-    profile_picture: Optional[str] = None
     is_verified: bool
     created_at: datetime.datetime

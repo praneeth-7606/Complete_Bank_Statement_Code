@@ -5,8 +5,6 @@ from jose import JWTError, jwt
 import bcrypt
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from google.oauth2 import id_token
-from google.auth.transport import requests
 from . import models
 from .config import settings
 
@@ -15,9 +13,6 @@ SECRET_KEY = settings.SECRET_KEY if hasattr(settings, 'SECRET_KEY') else "your-s
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 REFRESH_TOKEN_EXPIRE_DAYS = 7
-
-# Google OAuth settings
-GOOGLE_CLIENT_ID = settings.GOOGLE_CLIENT_ID if hasattr(settings, 'GOOGLE_CLIENT_ID') else None
 
 # Security scheme
 security = HTTPBearer()
@@ -117,38 +112,6 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(s
     return user
 
 
-async def verify_google_token(token: str) -> Optional[dict]:
-    """Verify Google OAuth token and return user info"""
-    if not GOOGLE_CLIENT_ID:
-        raise HTTPException(
-            status_code=500,
-            detail="Google OAuth not configured. Please set GOOGLE_CLIENT_ID in environment."
-        )
-    
-    try:
-        # Verify the token with Google
-        idinfo = id_token.verify_oauth2_token(
-            token, 
-            requests.Request(), 
-            GOOGLE_CLIENT_ID
-        )
-        
-        # Token is valid, return user info
-        return {
-            "google_id": idinfo.get("sub"),
-            "email": idinfo.get("email"),
-            "full_name": idinfo.get("name"),
-            "profile_picture": idinfo.get("picture"),
-            "is_verified": idinfo.get("email_verified", False)
-        }
-    except ValueError as e:
-        # Invalid token
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=f"Invalid Google token: {str(e)}"
-        )
-
-
 def create_tokens_for_user(user: models.User) -> dict:
     """Create access and refresh tokens for a user"""
     access_token = create_access_token(data={"sub": str(user.user_id)})
@@ -162,7 +125,6 @@ def create_tokens_for_user(user: models.User) -> dict:
             "user_id": str(user.user_id),
             "email": str(user.email),
             "full_name": str(user.full_name) if user.full_name else "",
-            "profile_picture": str(user.profile_picture) if user.profile_picture else None,
             "is_verified": bool(user.is_verified) if user.is_verified else False,
             "created_at": user.created_at.isoformat() if user.created_at else datetime.utcnow().isoformat()
         }

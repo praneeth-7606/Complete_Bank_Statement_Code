@@ -1,6 +1,5 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
-import { GoogleOAuthProvider } from '@react-oauth/google'
 import { AuthProvider } from './context/AuthContext'
 import { ThemeProvider } from './context/ThemeContext'
 import ProtectedRoute from './components/ProtectedRoute'
@@ -19,16 +18,11 @@ import StatementDetails from './pages/StatementDetails'
 import InvestmentChat from './pages/InvestmentChat'
 import Observability from './pages/Observability'
 
-// Replace with your actual Google Client ID
-// Leave empty to disable Google OAuth (email/password will still work)
-const GOOGLE_CLIENT_ID = import.meta.env.VITE_GOOGLE_CLIENT_ID || ""
-
 function App() {
   return (
-    <GoogleOAuthProvider clientId={GOOGLE_CLIENT_ID}>
-      <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
-        <ThemeProvider>
-          <AuthProvider>
+    <Router future={{ v7_startTransition: true, v7_relativeSplatPath: true }}>
+      <ThemeProvider>
+        <AuthProvider>
             <Toaster
               position="top-right"
               toastOptions={{
@@ -114,10 +108,9 @@ function App() {
                 </ProtectedRoute>
               } />
             </Routes>
-          </AuthProvider>
-        </ThemeProvider>
-      </Router>
-    </GoogleOAuthProvider>
+        </AuthProvider>
+      </ThemeProvider>
+    </Router>
   )
 }
 

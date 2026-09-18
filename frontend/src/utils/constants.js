@@ -347,7 +347,6 @@ export const API_ENDPOINTS = {
     SIGNUP: '/auth/signup',
     LOGOUT: '/auth/logout',
     ME: '/auth/me',
-    GOOGLE: '/auth/google',
   },
   STATEMENTS: {
     UPLOAD_SINGLE: '/process-statement',

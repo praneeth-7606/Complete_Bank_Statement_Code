@@ -6,6 +6,11 @@ from app.llm_provider import _configured_models
 TEST_MODEL = "gemini-test-model"
 
 
+def _provider_model(provider):
+    """Unwrap the observability RunnableBinding used around hosted models."""
+    return getattr(provider, "bound", provider)
+
+
 def _set_provider_keys(monkeypatch):
     monkeypatch.setattr(settings, "GEMINI_API_KEY", "gemini-test")
     monkeypatch.setattr(settings, "GROQ_API_KEY", "groq-test")
@@ -15,7 +20,7 @@ def _set_provider_keys(monkeypatch):
 def test_structured_route_is_gemini_groq_zai(monkeypatch):
     _set_provider_keys(monkeypatch)
     providers = _configured_models(TEST_MODEL, 0, route="structured")
-    assert providers[0].__class__.__name__ == "ChatGoogleGenerativeAI"
+    assert _provider_model(providers[0]).__class__.__name__ == "ChatGoogleGenerativeAI"
     assert [provider.model_name for provider in providers[1:]] == [
         settings.GROQ_MODEL,
         settings.ZAI_MODEL,
@@ -25,9 +30,9 @@ def test_structured_route_is_gemini_groq_zai(monkeypatch):
 def test_chat_route_is_groq_gemini_zai(monkeypatch):
     _set_provider_keys(monkeypatch)
     providers = _configured_models(TEST_MODEL, 0, route="chat")
-    assert providers[0].__class__.__name__ == "ChatOpenAI"
+    assert _provider_model(providers[0]).__class__.__name__ == "ChatOpenAI"
     assert providers[0].model_name == settings.GROQ_MODEL
-    assert providers[1].__class__.__name__ == "ChatGoogleGenerativeAI"
+    assert _provider_model(providers[1]).__class__.__name__ == "ChatGoogleGenerativeAI"
     assert providers[1].model == f"models/{TEST_MODEL}"
     assert providers[2].model_name == settings.ZAI_MODEL
 

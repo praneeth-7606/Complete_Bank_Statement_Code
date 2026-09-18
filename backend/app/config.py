@@ -14,8 +14,6 @@ class Settings(BaseSettings):
         LLM_TIMEOUT_SECONDS: float = 30.0
         MONGO_URI: str = ""
         SECRET_KEY: str = ""
-        GOOGLE_CLIENT_ID: str = ""  # Optional, for Google OAuth
-
         # Pinecone Vector Database Configuration (Production-Ready)
         PINECONE_API_KEY: str = ""
         PINECONE_ENVIRONMENT: str = "us-east-1"  # Your Pinecone region

@@ -66,19 +66,27 @@ class BrowserDriver:
         self.binary = configured_binary or (str(local_binary) if local_binary else "agent-browser")
         self.artifacts.mkdir(parents=True, exist_ok=True)
 
+    def _command(self, *args: str) -> List[str]:
+        """Build a cross-platform command, including Windows .cmd shims."""
+        command = [self.binary, "--session", self.session, *args]
+        if os.name == "nt" and self.binary.lower().endswith((".cmd", ".bat")):
+            return ["cmd.exe", "/d", "/c", *command]
+        return command
+
+    def _run_subprocess(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            self._command(*args), capture_output=True, text=True, timeout=45, check=False
+        )
+
     def run(self, step: str, *args: str, screenshot: bool = False) -> Evidence:
         started = time.perf_counter()
-        command = [self.binary, "--session", self.session, *args]
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=45)
+            result = self._run_subprocess(*args)
             output = (result.stdout or result.stderr or "").strip()
             artifact = None
             if screenshot:
                 artifact_path = self.artifacts / f"{len(list(self.artifacts.glob('*.png'))):03d}-{step}.png"
-                shot = subprocess.run(
-                    [self.binary, "--session", self.session, "screenshot", str(artifact_path)],
-                    capture_output=True, text=True, timeout=45,
-                )
+                shot = self._run_subprocess("screenshot", str(artifact_path))
                 if shot.returncode == 0 and artifact_path.exists():
                     artifact = str(artifact_path)
             ok = result.returncode == 0
@@ -86,6 +94,12 @@ class BrowserDriver:
                 step=step, action=" ".join(args), ok=ok, output=output[-8000:],
                 duration_ms=round((time.perf_counter() - started) * 1000),
                 artifact=artifact, error=None if ok else output[-2000:],
+            )
+        except subprocess.TimeoutExpired:
+            return Evidence(
+                step=step, action=" ".join(args), ok=False,
+                duration_ms=round((time.perf_counter() - started) * 1000),
+                error="agent-browser command timed out after 45 seconds",
             )
         except Exception as exc:
             return Evidence(
@@ -142,17 +156,35 @@ def build_tools(driver: BrowserDriver):
 
     @tool
     def upload_file(ref_or_locator: str, file_path: str) -> str:
-        """Upload a test PDF through a file input; only an existing PDF is allowed."""
+        """Upload an explicitly allowed PDF fixture through a file input."""
         candidate = Path(file_path).expanduser().resolve()
         if candidate.suffix.lower() != ".pdf":
             return json.dumps({"ok": False, "error": "Only PDF test fixtures are allowed"})
         fixture_root = Path(os.getenv("E2E_FIXTURE_DIR", "e2e-fixtures")).resolve()
-        if not candidate.is_file() or (candidate != fixture_root and fixture_root not in candidate.parents):
-            return json.dumps({"ok": False, "error": "Fixture must be an existing PDF under E2E_FIXTURE_DIR"})
+        allowed_files = {
+            Path(item).expanduser().resolve()
+            for item in os.getenv("E2E_ALLOWED_FILES", "").split(os.pathsep)
+            if item.strip()
+        }
+        is_under_fixture_root = candidate == fixture_root or fixture_root in candidate.parents
+        if not candidate.is_file() or (not is_under_fixture_root and candidate not in allowed_files):
+            return json.dumps({"ok": False, "error": "Fixture is not in E2E_FIXTURE_DIR or E2E_ALLOWED_FILES"})
         args = ["upload", ref_or_locator, str(candidate)]
         return driver.run("upload-file", *args, screenshot=True).model_dump_json()
 
-    return [open_page, snapshot, click, fill, wait_for, read_page, capture_screenshot, upload_file]
+    @tool
+    def fill_configured_secret(locator: str, secret_name: str = "E2E_STATEMENT_PASSWORD") -> str:
+        """Fill a browser field from an E2E environment secret without returning the secret."""
+        secret = os.getenv(secret_name, "")
+        if not secret:
+            return json.dumps({"ok": False, "error": f"Missing configured secret: {secret_name}"})
+        args = ["fill", locator, secret] if locator.startswith("@") else ["find", "label", locator, "fill", secret]
+        evidence = driver.run("fill-configured-secret", *args)
+        evidence.output = "configured secret submitted" if evidence.ok else ""
+        evidence.error = evidence.error if not evidence.ok else None
+        return evidence.model_dump_json()
+
+    return [open_page, snapshot, click, fill, wait_for, read_page, capture_screenshot, upload_file, fill_configured_secret]
 
 
 def create_agent(driver: BrowserDriver):
@@ -167,10 +199,13 @@ def create_agent(driver: BrowserDriver):
 Use browser tools only. Re-snapshot after every navigation or DOM change because refs expire.
 Test each scenario in order and collect evidence. Never invent a success: a scenario passes
 only when the visible UI, URL, and expected response are confirmed. Record the first broken
-boundary and continue with independent scenarios. Do not submit real financial data.
+boundary and continue with independent scenarios. Use only the supplied dedicated E2E account
+and explicitly allowed fixture PDFs; never use any other personal or financial data. Never repeat
+credentials or PDF passwords in the final summary.
 
 Application-specific scenarios:
 1. Public login page renders; signup navigation works; protected pages redirect unauthenticated users.
+   Confirm that no Google sign-in control or Google OAuth prompt is present.
 2. With supplied test credentials, login redirects to the authenticated dashboard.
 3. Dashboard, statements, analytics, transactions, corrections, and chat pages render without console-visible errors.
 4. Upload workflow shows validation for a non-PDF and starts processing for a supplied test PDF.
@@ -221,9 +256,15 @@ def run_public_smoke(driver: BrowserDriver, report: E2EReport) -> bool:
         ("protected-route-settle", ("wait", "500"), False),
         ("protected-login-url", ("get", "url"), False),
     ]
+    all_ok = True
     for step, args, screenshot in steps:
         evidence = driver.run(step, *args, screenshot=screenshot)
         report.evidence.append(evidence)
+        if evidence.ok and step in {"public-login-snapshot", "signup-snapshot"}:
+            google_markers = ("sign in with google", "continue with google", "google oauth", "google login")
+            if any(marker in evidence.output.lower() for marker in google_markers):
+                evidence.ok = False
+                evidence.error = "Google authentication UI is still present"
         if evidence.ok and step == "signup-url" and "/signup" not in evidence.output:
             evidence.ok = False
             evidence.error = f"Expected signup URL, got: {evidence.output}"
@@ -231,9 +272,9 @@ def run_public_smoke(driver: BrowserDriver, report: E2EReport) -> bool:
             evidence.ok = False
             evidence.error = f"Expected login redirect, got: {evidence.output}"
         if not evidence.ok:
+            all_ok = False
             report.issues.append(f"Public smoke check failed at {step}: {evidence.error or evidence.output}")
-            return False
-    return True
+    return all_ok
 
 
 def run(base_url: str, email: str = "", password: str = "", statement: str = "", smoke_only: bool = False) -> E2EReport:
@@ -253,16 +294,12 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "",
             report.status = "blocked"
             report.issues.append(f"Browser CLI not found: {driver.binary}")
             report.recommendations.append("Install agent-browser or set AGENT_BROWSER_BIN to its executable path.")
-            report.completed_at = datetime.now(timezone.utc).isoformat()
-            (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
             return report
         smoke_ok = run_public_smoke(driver, report)
         if smoke_only:
             report.status = "completed" if smoke_ok else "failed"
             if not email or not password:
                 report.recommendations.append("Provide dedicated E2E_TEST_EMAIL and E2E_TEST_PASSWORD for authenticated scenarios.")
-            report.completed_at = datetime.now(timezone.utc).isoformat()
-            (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
             return report
         agent = create_agent(driver)
         result = agent.invoke({"messages": [{"role": "user", "content": prompt}]}, config={"recursion_limit": 80})
@@ -281,8 +318,9 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "",
             report.recommendations.append(
                 "Configure a valid GEMINI_API_KEY, or configure GROQ_API_KEY for the Gemini-to-Groq fallback, then rerun."
             )
-    report.completed_at = datetime.now(timezone.utc).isoformat()
-    (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
+    finally:
+        report.completed_at = datetime.now(timezone.utc).isoformat()
+        (artifacts / "report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
     return report
 
 
