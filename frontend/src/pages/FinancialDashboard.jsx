@@ -286,12 +286,16 @@ const FinancialDashboard = () => {
                       <CountUp end={stat.value} duration={2} />
                     )}
                   </h3>
-                  <div className={`flex items-center gap-1 text-sm mt-2 ${stat.trendUp ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                    <ArrowUpRight className={`w-4 h-4 ${!stat.trendUp && 'rotate-90'}`} />
-                    <span className="font-semibold">{stat.trend}</span>
-                    <span className="text-gray-500">vs last month</span>
-                  </div>
+                  {stats.totalTransactions > 0 ? (
+                    <div className={`flex items-center gap-1 text-sm mt-2 ${stat.trendUp ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                      <ArrowUpRight className={`w-4 h-4 ${!stat.trendUp && 'rotate-90'}`} />
+                      <span className="font-semibold">{stat.trend}</span>
+                      <span className="text-gray-500">vs last month</span>
+                    </div>
+                  ) : (
+                    <div className="text-sm mt-2 text-gray-400">Upload data to see trends</div>
+                  )}
                 </div>
                 <div className={`${stat.bgColor} p-3 rounded-xl`}>
                   <Icon className={`w-7 h-7 ${stat.iconColor}`} />

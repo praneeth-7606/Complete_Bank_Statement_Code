@@ -11,9 +11,10 @@ export const useTheme = () => {
 };
 
 export const ThemeProvider = ({ children }) => {
-    // Check if theme is stored in localStorage, otherwise default to 'dark' (as current app is dark)
+    // Check if theme is stored in localStorage, otherwise default to 'light'
+    // (cards/components are light-designed; dark stays available via toggle)
     const [theme, setTheme] = useState(() => {
-        return localStorage.getItem('theme') || 'dark';
+        return localStorage.getItem('theme') || 'light';
     });
 
     useEffect(() => {
