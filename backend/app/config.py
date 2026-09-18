@@ -3,7 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
         GEMINI_API_KEY: str = ""
-        GEMINI_MODEL: str = "gemini-2.5-flash"
+        GEMINI_MODEL: str = "gemini-3.8-flash"
         GROQ_API_KEY: str = ""
         GROQ_MODEL: str = "openai/gpt-oss-20b"
         GROQ_BASE_URL: str = "https://api.groq.com/openai/v1"
@@ -11,6 +11,7 @@ class Settings(BaseSettings):
         ZAI_MODEL: str = "glm-4.7-flash"
         ZAI_VISION_MODEL: str = "glm-4.6v-flash"
         ZAI_BASE_URL: str = "https://api.z.ai/api/paas/v4"
+        LLM_TIMEOUT_SECONDS: float = 30.0
         MONGO_URI: str = ""
         SECRET_KEY: str = ""
         GOOGLE_CLIENT_ID: str = ""  # Optional, for Google OAuth
@@ -21,8 +22,8 @@ class Settings(BaseSettings):
         PINECONE_INDEX_NAME: str = "financial-transactions"  # Your index name
         
         # Mistral OCR Configuration
-        MISTRAL_API_KEY: str = ""  # Mistral API key for OCR 3 extraction
-        MISTRAL_OCR_MODEL: str = "mistral-ocr-latest"
+        MISTRAL_API_KEY: str = ""  # Mistral API key for OCR 4.1 extraction
+        MISTRAL_OCR_MODEL: str = "mistral-ocr-4-1"
 
         # Data Encryption Configuration (for database encryption)
         ENCRYPTION_KEY: str = ""  # Base64-encoded 256-bit key

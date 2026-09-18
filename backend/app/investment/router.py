@@ -3,6 +3,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from .pipeline import run_investment_pipeline
 from .. import models, auth_utils
+from ..observability import set_trace_user
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +25,7 @@ async def investment_chat(
       - llm_fallback_no_tools         : MCP connected but returned no tools
     """
     user_id = str(current_user.user_id)
+    set_trace_user(user_id, "investment_chat")
     logger.info(f"Investment chat | user={user_id} | query={query.query[:80]}")
 
     result = await run_investment_pipeline(query=query.query, user_id=user_id)

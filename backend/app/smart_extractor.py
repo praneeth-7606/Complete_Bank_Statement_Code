@@ -1,9 +1,9 @@
 # app/smart_extractor.py
 # ============================================================
-# EXTRACTION METHODOLOGY: Mistral OCR 3 (mistral-ocr-latest)
+# EXTRACTION METHODOLOGY: Configured Mistral OCR model
 # ============================================================
 # NEW APPROACH (ACTIVE):
-#   - Sends base64-encoded PDF directly to Mistral OCR 3
+#   - Sends base64-encoded PDF directly to the configured Mistral OCR model
 #   - OCR model reads the document (text, tables, scanned images)
 #     and returns structured JSON transactions in a SINGLE API call
 #   - No secondary LLM call needed
@@ -48,6 +48,7 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 from .config import settings
+from .observability import observe_external_llm
 from . import models, agents
 from .vector_store_pinecone import PineconeVectorStore
 from .log_streamer import log_streamer
@@ -81,12 +82,12 @@ class ProcessingState(TypedDict):
 
 
 # ============================================================
-# NEW EXTRACTOR: Mistral OCR 3
+# NEW EXTRACTOR: Mistral OCR
 # ============================================================
 
 class MistralOCRExtractor:
     """
-    NEW EXTRACTOR using Mistral OCR 3 (mistral-ocr-latest).
+    NEW EXTRACTOR using the configured Mistral OCR model.
 
     Flow:
         1. Base64-encode the PDF bytes (handles both digital & scanned PDFs)
@@ -96,7 +97,7 @@ class MistralOCRExtractor:
         4. Validate & normalise with _validate_transactions helper
 
     Why single-step:
-        Mistral OCR 3 supports 'doc-as-prompt'  the document IS the context,
+        Mistral OCR supports 'doc-as-prompt'  the document IS the context,
         and a prompt drives the model to output JSON directly without a 
         second LLM call.
     """
@@ -312,7 +313,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
     _LOG_DIR = Path(__file__).parent.parent / "logs" / "ocr"
 
     def __init__(self):
-        logger.info("[INIT] Initializing Mistral OCR 3 Extractor (mistral-ocr-latest)...")
+        logger.info(f"[INIT] Initializing Mistral OCR Extractor ({settings.MISTRAL_OCR_MODEL})...")
 
         if not settings.MISTRAL_API_KEY:
             raise ValueError(
@@ -352,7 +353,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         else:
             self.zai_vision_model = None
 
-        logger.info("[OK] Mistral OCR 3 Extractor ready (Gemini Vision -> Z.AI Vision fallback)")
+        logger.info("[OK] Mistral OCR extractor ready (Gemini Vision -> Z.AI Vision fallback)")
 
     # ----------------------------------------------------------
     # PUBLIC: main entry point (same signature as old extractor)
@@ -846,19 +847,33 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             db_txns = []
             if state.get("categorized_transactions"):
                 try:
-                    upload = models.Upload(
-                        upload_id=streaming_id,
-                        file_hash=hashlib.sha256(state["file_bytes"]).hexdigest(),
-                        filename=state["file_path"],
-                        file_size_bytes=len(state["file_bytes"]),
-                        status="completed",
-                        user_id=state["user_id"],
-                        bank_name=state["document_type"] or "Statement",
-                        extraction_method=state["extraction_method"],
-                        total_transactions=len(state["categorized_transactions"]),
-                        processing_time_seconds=round(time.time() - t_bg_start, 2),
-                        insights=bg_insights.get("insights", []) if isinstance(bg_insights, dict) else [],
+                    file_hash = hashlib.sha256(state["file_bytes"]).hexdigest()
+                    upload = await models.Upload.find_one(
+                        models.Upload.upload_id == streaming_id,
+                        models.Upload.user_id == str(state["user_id"]),
                     )
+                    if upload is None:
+                        upload = models.Upload(
+                            upload_id=streaming_id,
+                            file_hash=file_hash,
+                            filename=state["file_path"],
+                            file_size_bytes=len(state["file_bytes"]),
+                            user_id=state["user_id"],
+                        )
+
+                    # Complete the reservation created by the API before
+                    # inserting child transactions. A retry now updates the
+                    # same upload instead of creating a second upload record.
+                    upload.file_hash = file_hash
+                    upload.filename = state["file_path"]
+                    upload.file_size_bytes = len(state["file_bytes"])
+                    upload.status = "completed"
+                    upload.user_id = state["user_id"]
+                    upload.bank_name = state["document_type"] or "Statement"
+                    upload.extraction_method = state["extraction_method"]
+                    upload.total_transactions = len(state["categorized_transactions"])
+                    upload.processing_time_seconds = round(time.time() - t_bg_start, 2)
+                    upload.insights = bg_insights.get("insights", []) if isinstance(bg_insights, dict) else []
                     await upload.save()
                     db_upload_id = str(upload.id)
 
@@ -993,7 +1008,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     "processed_at":        datetime.now().isoformat(),
                     "extraction_method":   extraction_method,
                     "document_type":       document_type,
-                    "model_used":          "mistral-ocr-latest" if "MISTRAL" in extraction_method else "gemini-3.1-flash-lite-preview",
+                    "model_used":          settings.MISTRAL_OCR_MODEL if "MISTRAL" in extraction_method else settings.GEMINI_MODEL,
                     "processing_time_sec": round(elapsed, 3),
                     "timing_breakdown":    {k: round(v, 3) for k, v in (timing_breakdown or {}).items()},
                     "raw_transaction_count":       len(raw_transactions),
@@ -1187,10 +1202,10 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
 
     def _ocr_pdf_with_mistral(self, pdf_bytes: bytes, filename: str) -> Tuple[str, List[Dict]]:
         """
-        Send the PDF to Mistral OCR 3 using the dedicated OCR API (v2 SDK).
+        Send the PDF to the configured Mistral OCR model using the dedicated OCR API.
         Returns: (document_type, transactions list)
         """
-        logger.info("[API] Sending PDF to Mistral OCR API (mistral-ocr-latest)...")
+        logger.info(f"[API] Sending PDF to Mistral OCR API ({settings.MISTRAL_OCR_MODEL})...")
 
         # Encode PDF as base64 data URI
         b64_pdf = base64.standard_b64encode(pdf_bytes).decode("utf-8")
@@ -1218,16 +1233,18 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             try:
                 logger.info(f"   [RETRY] Attempt {attempt}/{max_retries}...")
 
-                ocr_response = self.client.ocr.process(
-                    model=settings.MISTRAL_OCR_MODEL,
-                    document={
-                        "type": "document_url",
-                        "document_url": document_data_uri,
-                    },
-                    document_annotation_format=annotation_format,
-                    document_annotation_prompt=self.EXTRACTION_PROMPT,
-                    include_image_base64=False,
-                )
+                with observe_external_llm("mistral", settings.MISTRAL_OCR_MODEL, kind="ocr") as span:
+                    ocr_response = self.client.ocr.process(
+                        model=settings.MISTRAL_OCR_MODEL,
+                        document={
+                            "type": "document_url",
+                            "document_url": document_data_uri,
+                        },
+                        document_annotation_format=annotation_format,
+                        document_annotation_prompt=self.EXTRACTION_PROMPT,
+                        include_image_base64=False,
+                    )
+                    span.response = ocr_response
 
                 logger.info("   [OK] Mistral OCR API responded successfully")
 
@@ -1528,7 +1545,9 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 
                 for attempt in range(2):
                     try:
-                        response = self.gemini_model.generate_content([prompt, image])
+                        with observe_external_llm("gemini", settings.GEMINI_MODEL, kind="ocr_vision") as span:
+                            response = self.gemini_model.generate_content([prompt, image])
+                            span.response = response
                         doc_type, page_txns = self._parse_json_response(response.text)
                         
                         if doc_type and doc_type != "unknown" and not doc_type_found:
@@ -1561,12 +1580,14 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             image.save(buffer, format="JPEG", quality=85, optimize=True)
             image_uri = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
             prompt = self.EXTRACTION_PROMPT + f"\n\nThis is page {page_num}. Return only JSON."
-            response = self.zai_vision_model.invoke([
-                HumanMessage(content=[
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_uri}},
+            with observe_external_llm("zai", settings.ZAI_VISION_MODEL, kind="ocr_vision") as span:
+                response = self.zai_vision_model.invoke([
+                    HumanMessage(content=[
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": image_uri}},
+                    ])
                 ])
-            ])
+                span.response = response
             content = response.content
             if isinstance(content, list):
                 content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
@@ -1654,5 +1675,5 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
 # ============================================================
 
 def get_smart_extractor():
-    """Return the active extractor instance (now Mistral OCR 3)."""
+    """Return the active Mistral OCR extractor instance."""
     return MistralOCRExtractor()

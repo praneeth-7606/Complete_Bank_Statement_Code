@@ -15,6 +15,7 @@ genai.configure(api_key=settings.GEMINI_API_KEY)
 
 from .base_agent import BaseAgent, extract_json_from_response
 from .llm_provider import build_llm, build_structured_llm
+from .observability import observe_external_llm
 
 
 
@@ -41,7 +42,8 @@ class BatchStructuredTransactions(BaseModel):
 class TransactionStructuringAgent:
     """Parses raw transaction lines into structured JSON using LangChain (LLM-First, No Agent Loop)."""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
+    def __init__(self, model_name: Optional[str] = None):
+        model_name = model_name or settings.GEMINI_MODEL
         self.llm = build_llm(model_name, temperature=0.1)
         self.structured_llm = build_structured_llm(BatchStructuredTransactions, model_name, temperature=0.1)
 
@@ -87,9 +89,9 @@ from .agent_analyst import FinancialAnalystAgent
 class FinancialChatAgent(BaseAgent):
     """Generates a natural language response for the chat API - OPTIMIZED FOR SPEED."""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
+    def __init__(self, model_name: Optional[str] = None):
         # Use stable Gemini Flash model (better rate limits)
-        super().__init__(model_name)
+        super().__init__(model_name or settings.GEMINI_MODEL, route="chat")
     
     async def generate_response(self, user_query: str, retrieved_data: List[Dict]) -> str:
         if not retrieved_data: return "I couldn't find any transactions that match your query."
@@ -166,9 +168,10 @@ class RoutePayload(BaseModel):
 class QueryRouterAgent:
     """Analyzes a user query to decide between vector search and filter-based search using Structured Output."""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
+    def __init__(self, model_name: Optional[str] = None):
+        model_name = model_name or settings.GEMINI_MODEL
         self.llm = build_llm(model_name, temperature=0.1)
-        self.structured_llm = build_structured_llm(RoutePayload, model_name, temperature=0.1)
+        self.structured_llm = build_structured_llm(RoutePayload, model_name, temperature=0.1, route="chat")
 
     async def route_query(self, user_query: str) -> Dict:
         current_year = datetime.datetime.now().year
@@ -286,12 +289,14 @@ class EmbeddingAgent:
             
             try:
                 # Explicitly request 768 dimensions for compatibility with Pinecone index
-                result = genai.embed_content(
-                    model=model_name,
-                    content=batch_content,
-                    task_type="retrieval_document",
-                    output_dimensionality=768
-                )
+                with observe_external_llm("gemini", model_name, kind="embedding") as span:
+                    result = genai.embed_content(
+                        model=model_name,
+                        content=batch_content,
+                        task_type="retrieval_document",
+                        output_dimensionality=768
+                    )
+                    span.response = result
                 
                 # Handle both single and batch responses
                 if 'embedding' in result:

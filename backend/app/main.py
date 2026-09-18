@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 import uuid
 import json
 import time
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from typing import List, Dict, Any
@@ -11,6 +11,8 @@ import datetime
 import asyncio
 import hashlib
 import logging
+from decimal import Decimal
+from bson.decimal128 import Decimal128
 from . import models, agents
 from .models import MultiStatementResponse, StatementFile
 from .database import init_db
@@ -23,11 +25,24 @@ from .logging_config import setup_logging
 from .data_encryptor import DataEncryptor, EncryptionError
 from .config import settings
 from .investment.router import router as investment_router
+from .observability_router import router as observability_router
+from .observability import bind_trace, current_trace, new_trace, reset_trace, set_trace_user
 
 # Initialize Logging for Terminal Visibility
 setup_logging()
 
 logger = logging.getLogger(__name__)
+
+
+def _decimal_number(value: Any) -> float:
+    """Convert Decimal/Decimal128 database values to the API's numeric contract."""
+    if isinstance(value, Decimal128):
+        value = value.to_decimal()
+    if value is None:
+        return 0.0
+    if isinstance(value, Decimal):
+        return float(value)
+    return float(value)
 
 # Initialize SMART EXTRACTOR - Auto-classifies PDFs and uses best method
 smart_extractor = None  # Will be initialized on first use
@@ -90,6 +105,48 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+
+@app.middleware("http")
+async def observability_middleware(request: Request, call_next):
+    """Create one durable trace for every HTTP request without blocking the app."""
+    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
+    trace = new_trace(request.url.path, request_id=request_id)
+    request.state.trace_id = trace.trace_id
+    request.state.request_id = request_id
+    token = bind_trace(trace)
+    started = time.perf_counter()
+    try:
+        response = await call_next(request)
+        status = "success" if response.status_code < 400 else "failed"
+        trace.add_event(
+            "http_request",
+            kind="http",
+            status=status,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            metadata={"method": request.method, "status_code": response.status_code},
+        )
+        trace.finish(status)
+        # Persistence is scheduled in the running event loop so telemetry does
+        # not add a MongoDB round-trip to the user-facing response path.
+        trace.schedule_persist()
+        response.headers["X-Request-ID"] = request_id
+        response.headers["X-Trace-ID"] = trace.trace_id
+        response.headers["X-Process-Time-Ms"] = str(round((time.perf_counter() - started) * 1000, 2))
+        return response
+    except Exception as exc:
+        trace.add_event(
+            "http_request",
+            kind="http",
+            status="failed",
+            duration_ms=(time.perf_counter() - started) * 1000,
+            error_type=type(exc).__name__,
+        )
+        trace.finish("failed")
+        trace.schedule_persist()
+        raise
+    finally:
+        reset_trace(token)
+
 # Add CORS middleware to allow frontend access
 app.add_middleware(
     CORSMiddleware,
@@ -113,6 +170,7 @@ rag_pipeline = AgenticRAGPipeline()
 # Include routers
 app.include_router(auth_router)
 app.include_router(investment_router)
+app.include_router(observability_router)
 
 # Test endpoint to verify CORS
 @app.get("/test-cors")
@@ -195,6 +253,10 @@ async def process_single_statement_core(
     """
     Core logic for processing a single statement using the optimized SmartExtractor.
     """
+    trace = current_trace()
+    if trace:
+        trace.set_user(user_id, "statement_processing")
+    started = time.perf_counter()
     try:
         pdf_content = await pdf_file.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
         _validate_pdf_upload(pdf_file, pdf_content)
@@ -222,6 +284,17 @@ async def process_single_statement_core(
                 "error": result.get("errors", ["No transactions extracted"])[0]
             }
 
+        if trace:
+            trace.add_event(
+                "statement_pipeline",
+                kind="pipeline",
+                metadata={
+                    "upload_id": streaming_id,
+                    "transaction_count": len(result["transactions"]),
+                    "extraction_method": result.get("extraction_method"),
+                },
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
         return {
             "success": True,
             "filename": pdf_file.filename,
@@ -232,6 +305,15 @@ async def process_single_statement_core(
         }
         
     except Exception as e:
+        if trace:
+            trace.add_event(
+                "statement_pipeline",
+                kind="pipeline",
+                status="failed",
+                duration_ms=(time.perf_counter() - started) * 1000,
+                metadata={"upload_id": streaming_id},
+                error_type=type(e).__name__,
+            )
         logger.error(f"Error processing {pdf_file.filename}: {str(e)}")
         return {
             "success": False,
@@ -281,6 +363,7 @@ async def process_multiple_statements(
     Returns:
         JSON list of all transactions stored in the database with complete details
     """
+    set_trace_user(current_user.user_id, "batch_statement_processing")
     password_list = [p.strip() for p in passwords.split(',')]
     statement_count = len(statement_pdfs)
     if statement_count > settings.MAX_BATCH_STATEMENTS:
@@ -431,6 +514,7 @@ async def process_statement(
     6. Return Response IMMEDIATELY
     7. Background: Database Storage (encrypted) + Vector Indexing
     """
+    set_trace_user(current_user.user_id, "statement_upload")
     logger.info("Starting /process-statement endpoint with improved workflow.")
     logger.info("SECURITY: Password will be used only for PDF decryption")
     
@@ -448,6 +532,7 @@ async def process_statement(
     
     start_time = time.time()
     user_id_str = str(current_user.user_id) if hasattr(current_user, 'user_id') else str(current_user.id)
+    reserved_upload = None
     
     try:
         upload_bytes = await statement_pdf.read(settings.MAX_UPLOAD_SIZE_BYTES + 1)
@@ -460,6 +545,19 @@ async def process_statement(
         )
         if duplicate:
             raise HTTPException(status_code=409, detail="This statement has already been uploaded")
+
+        # Reserve the upload before the hot path starts. Persistence and vector
+        # indexing run in the background, so checking only the existing
+        # completed uploads leaves a race where two identical requests both
+        # enter processing and create duplicate transactions.
+        reserved_upload = models.Upload(
+            upload_id=streaming_id,
+            file_hash=file_hash,
+            filename=statement_pdf.filename or "statement.pdf",
+            file_size_bytes=len(upload_bytes),
+            status="processing",
+            user_id=user_id_str,
+        ).insert()
         # ============================================
         # UNIFIED HOT-PATH: Extraction -> Categorization -> Insights
         # ============================================
@@ -478,6 +576,10 @@ async def process_statement(
         )
         
         if not result.get("success"):
+            if reserved_upload:
+                reserved_upload.status = "failed"
+                reserved_upload.error_message = str(result.get("error", "Statement processing failed"))
+                await reserved_upload.save()
             await log_streamer.add_log(streaming_id, f"[FAIL] Processing failed: {result.get('error')}", "error", 100)
             return {
                 "status": "failed",
@@ -512,6 +614,10 @@ async def process_statement(
         
     except Exception as e:
         logger.error(f"Error in /process-statement/: {str(e)}", exc_info=True)
+        if reserved_upload:
+            reserved_upload.status = "failed"
+            reserved_upload.error_message = str(e)
+            await reserved_upload.save()
         await log_streamer.add_log(streaming_id, f"[FAIL] System Error: {str(e)}", "error", 0)
         return {
             "status": "failed",
@@ -521,23 +627,6 @@ async def process_statement(
             "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
         
-    except Exception as e:
-        logger.error(f"Error processing {statement_pdf.filename}: {str(e)}", exc_info=True)
-        await log_streamer.add_log(
-            streaming_id,
-            f"[FAIL] Error: {str(e)}",
-            "error",
-            0
-        )
-        return {
-            "status": "failed",
-            "upload_id": streaming_id,
-            "message": "Statement processing failed",
-            "transactions": [],
-            "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
-        }
-
-
 # ============================================
 # OTHER ENDPOINTS
 # ============================================
@@ -549,13 +638,14 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
     Targets < 3 second response time.
     """
     import time
+    set_trace_user(current_user.user_id, "transaction_rag_chat")
     start_time = time.time()
     
     # Enhanced logging for debugging
     logger.info("="*80)
-    logger.info(f"📨 CHAT REQUEST from user: {current_user.email}")
-    logger.info(f"📝 Query: {query.query}")
-    logger.info(f"🔑 User ID: {current_user.user_id}")
+    logger.info(f"[CHAT_REQUEST] user={current_user.email}")
+    logger.info(f"[CHAT_QUERY] {query.query}")
+    logger.info(f"[CHAT_USER_ID] {current_user.user_id}")
     
     try:
         user_id = str(current_user.user_id)
@@ -565,16 +655,33 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
         if history is None:
             history = SESSION_HISTORY.get(user_id, [])
         
-        logger.info(f"📚 Chat history length: {len(history)} messages")
+        logger.info(f"[CHAT_HISTORY] {len(history)} messages")
 
         # 2. Run Pipeline
-        logger.info("🚀 Starting RAG pipeline...")
+        logger.info("[RAG_START] Starting RAG pipeline")
         result = await rag_pipeline.run(
             user_query=query.query,
             user_id=user_id,
             chat_history=history
         )
-        logger.info("✅ RAG pipeline completed")
+        if current_trace():
+            plan = result.get("plan")
+            current_trace().add_event(
+                "rag_pipeline",
+                kind="rag",
+                metadata={
+                    "plan": {
+                        "query_type": getattr(plan, "query_type", None),
+                        "needs_mongo": getattr(plan, "needs_mongo", None),
+                        "needs_vector": getattr(plan, "needs_vector", None),
+                        "needs_aggregation": getattr(plan, "needs_aggregation", None),
+                        "limit": getattr(plan, "limit", None),
+                    },
+                    "transaction_count": len(result.get("transactions", [])),
+                },
+                duration_ms=(time.time() - start_time) * 1000,
+            )
+        logger.info("[RAG_COMPLETE] RAG pipeline completed")
 
         processing_time = int((time.time() - start_time) * 1000)
         
@@ -584,7 +691,7 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
         insights = result.get("insights", [])
         transactions = result.get("transactions", [])
         
-        logger.info(f"📊 Response stats:")
+        logger.info("[CHAT_RESPONSE_STATS]")
         logger.info(f"   - Answer length: {len(answer)} chars")
         logger.info(f"   - Metrics: {len(metrics)}")
         logger.info(f"   - Insights: {len(insights)}")
@@ -598,7 +705,7 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
         ]
         SESSION_HISTORY[user_id] = new_history[-15:]
         
-        logger.info("✅ Chat request completed successfully")
+        logger.info("[CHAT_COMPLETE] Chat request completed successfully")
         logger.info("="*80)
 
         return {
@@ -779,10 +886,10 @@ async def get_statement_details(
                 "id": str(txn.id),
                 "date": txn.date.isoformat(),
                 "description": description,
-                "amount": float(txn.amount),
+                "amount": _decimal_number(txn.amount),
                 "category": txn.category,
-                "credit": float(txn.credit),
-                "debit": float(txn.debit),
+                "credit": _decimal_number(txn.credit),
+                "debit": _decimal_number(txn.debit),
                 "upload_id": txn.upload_id
             })
         

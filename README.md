@@ -78,6 +78,9 @@ backend/tests/                         Backend unit tests
 frontend/src/pages/                    Product screens
 frontend/src/components/               Reusable UI components
 frontend/src/services/api.js           Frontend API client
+backend/app/observability.py            Request traces, LLM metrics, cost, and provider callbacks
+backend/app/observability_router.py     Authenticated observability API for the dashboard
+frontend/src/pages/Observability.jsx    In-app flight recorder dashboard
 ```
 
 ## Prerequisites
@@ -99,14 +102,14 @@ SECRET_KEY=use-a-random-secret-at-least-32-characters-long
 MISTRAL_API_KEY=your_mistral_key
 GEMINI_API_KEY=your_gemini_key
 GROQ_API_KEY=your_groq_key
-GEMINI_MODEL=gemini-2.5-flash
+GEMINI_MODEL=gemini-3.8-flash
 GROQ_MODEL=openai/gpt-oss-20b
 GROQ_BASE_URL=https://api.groq.com/openai/v1
 ZAI_API_KEY=your_zai_key
 ZAI_MODEL=glm-4.7-flash
 ZAI_VISION_MODEL=glm-4.6v-flash
 ZAI_BASE_URL=https://api.z.ai/api/paas/v4
-MISTRAL_OCR_MODEL=mistral-ocr-latest
+MISTRAL_OCR_MODEL=mistral-ocr-4-1
 PINECONE_API_KEY=your_pinecone_key
 PINECONE_ENVIRONMENT=us-east-1
 PINECONE_INDEX_NAME=financial-transactions
@@ -145,6 +148,12 @@ AI: `POST /chat`. Optional investment routes are mounted under the investment ro
 LLM routing: structured extraction/categorization uses Gemini Flash → Groq GPT-OSS-20B → Z.AI GLM-4.7-Flash. Chat/RAG uses Groq GPT-OSS-20B → Gemini Flash → Z.AI GLM-4.7-Flash. OCR uses the configured Mistral OCR 3-compatible model → Gemini Vision → Z.AI GLM-4.6V-Flash → conservative deterministic PDF text parsing.
 
 All statement, transaction, analytics, chat, and log operations must be scoped to the authenticated user.
+
+## In-app observability
+
+Open **Observability** from the authenticated navigation to inspect the last hour, day, or week of activity. Each request receives an `X-Request-ID` and `X-Trace-ID`; the dashboard shows request latency/status, workflow events, OCR/RAG stages, provider/model calls, token usage, fallback calls, failures, and estimated USD cost. Traces are stored in the user-scoped `observability_traces` MongoDB collection and never include prompts, PDF passwords, API keys, or raw transaction descriptions.
+
+The telemetry layer is intentionally fail-open: a MongoDB or instrumentation error is logged and does not fail statement processing or chat. Provider usage is shown as `unavailable` when an SDK does not return token metadata, and cost is an estimate based on the configured model pricing table. For production, add retention/TTL cleanup, centralized log shipping, alert thresholds, and an admin-only aggregate view rather than exposing other users' traces.
 
 ## Verification
 

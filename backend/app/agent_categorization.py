@@ -131,7 +131,8 @@ class PatternEngine:
 class CategorizationAgent:
     """Production-grade self-learning financial intelligence engine."""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
+    def __init__(self, model_name: Optional[str] = None):
+        model_name = model_name or settings.GEMINI_MODEL
         self.llm = build_llm(model_name, temperature=0)
         self.structured_llm = build_structured_llm(BatchCategorization, model_name, temperature=0)
         

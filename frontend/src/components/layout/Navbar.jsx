@@ -9,6 +9,7 @@ import {
   Receipt,
   BarChart3,
   MessageSquare,
+  Activity,
   FileText,
   User,
   LogOut,
@@ -50,6 +51,7 @@ const Navbar = () => {
     { path: '/transactions', label: 'Transactions', icon: Receipt },
     { path: '/analytics', label: 'Analytics', icon: BarChart3 },
     { path: '/chat', label: 'Chat', icon: MessageSquare },
+    { path: '/observability', label: 'Observability', icon: Activity },
     { path: '/investment', label: 'Investments', icon: TrendingUp },
     { path: '/statements', label: 'Statements', icon: FileText }
   ];

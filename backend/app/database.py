@@ -16,6 +16,7 @@ async def init_db():
             models.Transaction,
             models.Correction,
             models.ProcessingJob,
+            models.ObservabilityTrace,
         ]
     )
     print("Database connection initialized with authentication support.")

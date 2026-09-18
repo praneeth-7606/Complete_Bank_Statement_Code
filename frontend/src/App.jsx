@@ -17,6 +17,7 @@ import Corrections from './pages/Corrections'
 import Statements from './pages/Statements'
 import StatementDetails from './pages/StatementDetails'
 import InvestmentChat from './pages/InvestmentChat'
+import Observability from './pages/Observability'
 
 // Replace with your actual Google Client ID
 // Leave empty to disable Google OAuth (email/password will still work)
@@ -105,6 +106,11 @@ function App() {
               <Route path="/investment" element={
                 <ProtectedRoute>
                   <ModernLayout><InvestmentChat /></ModernLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/observability" element={
+                <ProtectedRoute>
+                  <ModernLayout><Observability /></ModernLayout>
                 </ProtectedRoute>
               } />
             </Routes>

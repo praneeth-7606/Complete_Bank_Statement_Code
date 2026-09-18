@@ -1,6 +1,7 @@
 # app/models.py
 from beanie import Document
-from pydantic import BaseModel, Field, EmailStr
+from pydantic import BaseModel, Field, EmailStr, field_validator
+from bson.decimal128 import Decimal128
 import uuid
 import datetime
 from decimal import Decimal
@@ -52,6 +53,18 @@ class Transaction(Document):
     debit: Decimal = Decimal("0.00")
     credit: Decimal = Decimal("0.00")
     # --- END OF FIX ---
+
+    @field_validator("amount", "debit", "credit", mode="before")
+    @classmethod
+    def normalize_decimal_values(cls, value):
+        """Normalize MongoDB Decimal128 values before Pydantic validation."""
+        if isinstance(value, Decimal128):
+            return value.to_decimal()
+        if value is None:
+            return Decimal("0.00")
+        if isinstance(value, Decimal):
+            return value
+        return Decimal(str(value))
     
     # Encrypted fields for sensitive data
     description_encrypted: Optional[str] = None  # Encrypted version of description
@@ -130,6 +143,27 @@ class ProcessingJob(Document):
     class Settings:
         name = "processing_jobs"
         indexes = ["job_id", "upload_id", "user_id", "status", "created_at"]
+
+
+class ObservabilityTrace(Document):
+    """Safe, user-scoped execution telemetry for the in-app dashboard."""
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    request_id: str
+    user_id: Optional[str] = None
+    route: str
+    operation: str
+    status: str = "running"
+    started_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    ended_at: Optional[datetime.datetime] = None
+    duration_ms: float = 0.0
+    events: List[Dict[str, Any]] = Field(default_factory=list)
+    llm_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    metrics: Dict[str, Any] = Field(default_factory=dict)
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+    class Settings:
+        name = "observability_traces"
+        indexes = ["trace_id", "request_id", "user_id", "route", "status", "started_at"]
 
 # --- Pydantic Models (for API request/response validation) ---
 

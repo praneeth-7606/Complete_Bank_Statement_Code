@@ -21,8 +21,8 @@ def extract_json_from_response(text: str) -> Any:
 
 class BaseAgent:
     """A base class for generative AI agents using LangChain with consistent auth and retry logic."""
-    def __init__(self, model_name="gemini-2.0-flash", temperature=0.3):
-        self.llm = build_llm(model_name, temperature)
+    def __init__(self, model_name: str | None = None, temperature=0.3, route: str = "structured"):
+        self.llm = build_llm(model_name or settings.GEMINI_MODEL, temperature, route=route)
     
     async def _get_json_response(self, prompt: str) -> Dict[str, Any]:
         """Get JSON response using LangChain and a robust JSON output parser."""

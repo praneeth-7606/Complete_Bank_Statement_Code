@@ -80,9 +80,9 @@ def calculate_savings_rate(total_income: float, total_expenses: float) -> float:
 class FinancialAnalystAgent(BaseAgent):
     """Production-grade financial insights generator using an Agent-driven approach with strictly deterministic tools and LangGraph."""
     
-    def __init__(self, model_name="gemini-2.5-flash"):
-        self.model_name = model_name
-        super().__init__(model_name=model_name)
+    def __init__(self, model_name: Optional[str] = None):
+        self.model_name = model_name or settings.GEMINI_MODEL
+        super().__init__(model_name=self.model_name, route="chat")
         
         # Tools for the Insights Agent
         self.tools = [
@@ -120,7 +120,23 @@ class FinancialAnalystAgent(BaseAgent):
             
         except Exception as e:
             logger.error(f"Insights Agent failed: {e}")
+            total_income = sum(float(t.get("credit", 0) or 0) for t in transactions)
+            total_expenses = sum(float(t.get("debit", 0) or 0) for t in transactions)
+            category_totals: Dict[str, float] = {}
+            for transaction in transactions:
+                category = transaction.get("category") or "Other"
+                category_totals[category] = category_totals.get(category, 0.0) + float(transaction.get("debit", 0) or 0)
+            top_category = max(category_totals, key=category_totals.get) if category_totals else "Other"
             return {
-                "insights": ["System error occurred during analysis."],
-                "summary": "Full analysis unavailable."
+                "insights": [
+                    f"Total received: Rs {total_income:,.2f}.",
+                    f"Total spent: Rs {total_expenses:,.2f}.",
+                    f"Net cash flow: Rs {total_income - total_expenses:,.2f}.",
+                    f"Largest spending category: {top_category}.",
+                    "AI narrative generation was unavailable; deterministic totals are shown instead.",
+                ],
+                "summary": (
+                    f"Deterministic summary: received Rs {total_income:,.2f}, "
+                    f"spent Rs {total_expenses:,.2f}, net cash flow Rs {total_income - total_expenses:,.2f}."
+                )
             }

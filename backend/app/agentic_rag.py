@@ -19,6 +19,7 @@ import logging
 import re
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
+from bson.decimal128 import Decimal128
 
 from langchain.agents import AgentExecutor, create_tool_calling_agent
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
@@ -31,6 +32,7 @@ from .config import settings
 from .llm_provider import build_chat_llm, build_llm, build_structured_llm
 from .vector_store_pinecone import PineconeVectorStore
 from .rag_logger import rag_logger
+from .observability import observe_external_llm
 
 logger = logging.getLogger(__name__)
 
@@ -235,7 +237,7 @@ RECENT CONVERSATION:
 class PlanningAgent:
     def __init__(self):
         self.llm = build_chat_llm(settings.GEMINI_MODEL, temperature=0.0)
-        self.structured_llm = build_structured_llm(QueryPlan, settings.GEMINI_MODEL, temperature=0.0)
+        self.structured_llm = build_structured_llm(QueryPlan, settings.GEMINI_MODEL, temperature=0.0, route="chat")
 
     def _build_system_prompt(self, history: List[Dict]) -> str:
         today = datetime.datetime.now().strftime("%Y-%m-%d")
@@ -280,7 +282,90 @@ class PlanningAgent:
 
         return plan
 
+    def _deterministic_financial_plan(self, query: str) -> Optional[QueryPlan]:
+        """Use an exact Mongo plan for high-confidence accounting queries.
+
+        Totals must never depend on an LLM's interpretation or on approximate
+        vector recall. This fast path also avoids provider-specific
+        structured-output schema limitations.
+        """
+        q = query.lower()
+        aggregation_terms = (
+            "total", "how much", "sum", "spent", "spend", "debit", "credit",
+            "received", "income", "average", "avg", "cash flow",
+        )
+        list_terms = ("list", "show", "all transactions", "display", "fetch")
+        category_map = {
+            "food": "Food & Dining",
+            "dining": "Food & Dining",
+            "travel": "Travel",
+            "shopping": "Shopping",
+            "entertainment": "Entertainment",
+            "healthcare": "Healthcare",
+            "education": "Education",
+            "salary": "Salary",
+            "investment": "Investment",
+            "transport": "Transportation",
+            "transportation": "Transportation",
+            "utility": "Bills & Utilities",
+            "utilities": "Bills & Utilities",
+        }
+        category = None
+        for keyword, canonical in category_map.items():
+            if re.search(rf"\b{re.escape(keyword)}\b", q):
+                category = canonical
+                break
+
+        # Category searches are exact structured queries, even when phrased as
+        # a natural-language question. Do not spend an LLM call on them.
+        if category:
+            is_aggregate = any(term in q for term in aggregation_terms)
+            return QueryPlan(
+                needs_mongo=True,
+                needs_vector=False,
+                needs_aggregation=is_aggregate,
+                filters={"category": category},
+                query_type="analytical" if is_aggregate else "simple",
+                limit=1000,
+                intent=f"Transactions in {category}",
+            )
+
+        # Merchant/description questions intentionally exercise the hybrid
+        # retriever, but routing itself remains deterministic when a provider
+        # is rate-limited or unavailable.
+        semantic_terms = ("merchant", "related to", "description", "payment to", "transaction for")
+        if any(term in q for term in semantic_terms):
+            return QueryPlan(
+                needs_mongo=True,
+                needs_vector=True,
+                needs_aggregation=False,
+                vector_query=query,
+                query_type="semantic",
+                limit=50,
+                intent="Hybrid merchant or description search",
+            )
+
+        if not any(term in q for term in aggregation_terms + list_terms):
+            return None
+
+        is_list = any(term in q for term in list_terms) and not any(
+            term in q for term in aggregation_terms
+        )
+        return QueryPlan(
+            needs_mongo=True,
+            needs_vector=False,
+            needs_aggregation=not is_list,
+            filters={},
+            query_type="simple" if is_list else "analytical",
+            limit=1000,
+            intent="Deterministic financial transaction query",
+        )
+
     async def plan(self, query: str, history: List[Dict] = None) -> Tuple[QueryPlan, List[str]]:
+        deterministic_plan = self._deterministic_financial_plan(query)
+        if deterministic_plan is not None:
+            return deterministic_plan, ["Deterministic Mongo plan applied for accounting query"]
+
         system_prompt = self._build_system_prompt(history or [])
         applied_corrections = []
         try:
@@ -335,6 +420,8 @@ class HybridRetrievalLayer:
         for field in ["amount", "debit", "credit"]:
             if field in doc:
                 try:
+                    if isinstance(doc[field], Decimal128):
+                        doc[field] = doc[field].to_decimal()
                     doc[field] = float(doc[field] or 0)
                 except (TypeError, ValueError):
                     doc[field] = 0.0
@@ -368,7 +455,14 @@ class HybridRetrievalLayer:
 
             hard_limit = min(plan.limit, 1000)
             docs = await cursor.limit(hard_limit).to_list(length=hard_limit)
-            return [self._normalize_doc(d) for d in docs], None
+            normalized = []
+            for d in docs:
+                # Mongo's ObjectId and Pinecone's transaction_id represent
+                # the same record. Preserve one canonical ID for deduplication.
+                if d.get("_id") is not None:
+                    d["transaction_id"] = str(d.get("_id"))
+                normalized.append(self._normalize_doc(d))
+            return normalized, None
         except Exception as e:
             err_msg = str(e)
             logger.error(f"Mongo retrieval failed: {err_msg}", exc_info=True)
@@ -389,33 +483,58 @@ class HybridRetrievalLayer:
             logger.error(f"Pinecone retrieval failed: {err_msg}", exc_info=True)
             return [], err_msg
 
+    @staticmethod
+    def _document_keys(doc: Dict) -> set[str]:
+        """Return all safe identities for a MongoDB/Pinecone transaction."""
+        keys = set()
+        transaction_id = doc.get("transaction_id")
+        if transaction_id and str(transaction_id).lower() not in {"none", "null"}:
+            keys.add(f"transaction:{transaction_id}")
+        mongo_id = doc.get("_id")
+        if mongo_id:
+            keys.add(f"transaction:{mongo_id}")
+        if keys:
+            # Distinct ledger rows can legitimately share the same date,
+            # description, and amount, so do not use a content fingerprint
+            # when a trusted stable ID is present.
+            return keys
+        # Also keep a content fingerprint. This covers legacy vectors whose
+        # ID was generated differently from Mongo's ObjectId.
+        fingerprint = "|".join(str(doc.get(k, "")) for k in (
+            "user_id", "date", "description", "amount", "debit", "credit"
+        ))
+        keys.add(f"fingerprint:{fingerprint}")
+        return keys
+
     async def retrieve(self, plan: QueryPlan, user_id: str) -> List[Dict]:
         # Bug #17: Security guard against empty user_id
         if not user_id:
             logger.error("Security alert: Attempted retrieval with empty user_id")
             raise ValueError("user_id is required for secure transaction retrieval")
 
-        tasks: List[asyncio.Task] = []
+        tasks: List[Tuple[str, asyncio.Task]] = []
         if plan.needs_mongo:
-            tasks.append(asyncio.create_task(self._mongo_query(plan, user_id)))
+            tasks.append(("mongo", asyncio.create_task(self._mongo_query(plan, user_id))))
         if plan.needs_vector:
-            tasks.append(asyncio.create_task(self._vector_query(plan, user_id)))
+            tasks.append(("vector", asyncio.create_task(self._vector_query(plan, user_id))))
         if not tasks:
-            tasks.append(asyncio.create_task(self._mongo_query(
+            tasks.append(("mongo", asyncio.create_task(self._mongo_query(
                 QueryPlan(needs_mongo=True, filters={}, limit=100), user_id
-            )))
+            ))))
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*(task for _, task in tasks), return_exceptions=True)
         merged: List[Dict] = []
         seen: set = set()
         mongo_count = 0
         vector_count = 0
         source_errors = []
+        mongo_docs: List[Dict] = []
+        vector_docs: List[Dict] = []
 
         # Dissecting gather results safely
-        for i, res in enumerate(results):
+        for (source, _), res in zip(tasks, results):
             if isinstance(res, Exception):
-                source_errors.append(f"Task {i} failed: {str(res)}")
+                source_errors.append(f"{source} task failed: {str(res)}")
                 continue
             
             docs, err = res
@@ -423,17 +542,23 @@ class HybridRetrievalLayer:
                 source_errors.append(err)
                 continue
 
-            # Identify if it was mongo (idx 0 if both enabled)
-            is_mongo = (i == 0 and plan.needs_mongo) or (i == 1 and not plan.needs_mongo and plan.needs_vector) 
-            # This logic is a bit brittle, lets just use counts for logs
-            if plan.needs_mongo and i == 0: mongo_count = len(docs)
-            elif plan.needs_vector: vector_count = len(docs)
+            if source == "mongo":
+                mongo_count = len(docs)
+                mongo_docs.extend(docs)
+            else:
+                vector_count = len(docs)
+                vector_docs.extend(docs)
 
-            for doc in docs:
-                uid = doc.get("_id") or doc.get("transaction_id")
-                if uid and uid not in seen:
-                    seen.add(uid)
-                    merged.append(doc)
+        # Mongo is the authoritative financial ledger. Pinecone is used for
+        # semantic recall, but must not replace or alter ledger rows when the
+        # structured query already returned Mongo documents. This prevents
+        # stale/legacy vector metadata from changing totals.
+        candidate_docs = mongo_docs if mongo_docs else vector_docs
+        for doc in candidate_docs:
+            identities = self._document_keys(doc)
+            if not identities.intersection(seen):
+                seen.update(identities)
+                merged.append(doc)
         
         rag_logger.log_retrieval(
             mongo_enabled=plan.needs_mongo,
@@ -558,7 +683,7 @@ REQUIRED JSON FORMAT:
   "answer": "Comprehensive answer...",
   "metrics": [{{"label": "...", "value": "...", "formatted": "₹1,23,456.00"}}],
   "insights": [{{"text": "...", "type": "info|warning|tip|highlight", "icon": "emoji"}}],
-  "transactions": [{{"date": "...", "description": "...", "amount": 0.0, "category": "..."}}],
+  "transactions": [{{"date": "...", "description": "...", "amount": 0.0, "debit": 0.0, "credit": 0.0, "category": "..."}}],
   "summary_line": "TL;DR"
 }}
 """
@@ -567,7 +692,7 @@ class ResponseGenerator:
     async def generate(self, query: str, context: FinancialContext, plan: QueryPlan) -> Dict:
         llm = build_chat_llm(settings.GEMINI_MODEL, temperature=0.1)
         
-        raw_txns = context.raw_docs[:200] # Safe token limit for Gemini 2.5 Flash
+        raw_txns = context.raw_docs[:200]
         
         p = f"{RESPONSE_SYSTEM_PROMPT}\n\nQUERY: {query}\nPRE-COMPUTED METRICS: {context.model_dump_json(exclude={'raw_docs'})}\nRAW TRANSACTIONS: {json.dumps(raw_txns, default=str)}\nYOUR JSON RESPONSE:"
         try:
@@ -575,6 +700,28 @@ class ResponseGenerator:
             c = res.content.strip()
             if "```json" in c: c = c.split("```json")[1].split("```")[0].strip()
             final_json = json.loads(c)
+            # Totals and transaction amounts come from deterministic context, not model arithmetic.
+            final_json["metrics"] = [
+                {"label": "Total spent", "value": context.total_debit, "formatted": f"Rs {context.total_debit:,.2f}"},
+                {"label": "Total received", "value": context.total_credit, "formatted": f"Rs {context.total_credit:,.2f}"},
+                {"label": "Net cash flow", "value": context.net_flow, "formatted": f"Rs {context.net_flow:,.2f}"},
+            ]
+            final_json["transactions"] = context.top_transactions
+            if plan.needs_aggregation:
+                # For accounting questions, the user-facing sentence must be
+                # grounded in the deterministic Mongo context as well as the
+                # metrics cards. This prevents a provider from hallucinating
+                # arithmetic even when its JSON is otherwise valid.
+                final_json["answer"] = (
+                    f"Across {context.transaction_count} transactions, total spent was "
+                    f"Rs {context.total_debit:,.2f}, total received was "
+                    f"Rs {context.total_credit:,.2f}, and net cash flow was "
+                    f"Rs {context.net_flow:,.2f}."
+                )
+                final_json["summary_line"] = (
+                    f"Spent Rs {context.total_debit:,.2f}; received "
+                    f"Rs {context.total_credit:,.2f}."
+                )
             rag_logger.log_response_gen(
                 json_parse_success=True,
                 fallback_used=False,
@@ -586,8 +733,21 @@ class ResponseGenerator:
             return final_json
         except Exception as e:
             rag_logger.log_error("RESPONSE_GENERATOR", e)
-            fallback_ans = f"Direct LLM response failed. Analyzed {context.transaction_count} transactions."
-            fallback = {"answer": fallback_ans, "transactions": context.top_transactions[:10]}
+            fallback_ans = (
+                f"Analyzed {context.transaction_count} transactions. "
+                f"Total spent: Rs {context.total_debit:,.2f}; "
+                f"total received: Rs {context.total_credit:,.2f}; "
+                f"net cash flow: Rs {context.net_flow:,.2f}."
+            )
+            fallback = {
+                "answer": fallback_ans,
+                "metrics": [
+                    {"label": "Total spent", "value": context.total_debit, "formatted": f"Rs {context.total_debit:,.2f}"},
+                    {"label": "Total received", "value": context.total_credit, "formatted": f"Rs {context.total_credit:,.2f}"},
+                    {"label": "Net cash flow", "value": context.net_flow, "formatted": f"Rs {context.net_flow:,.2f}"},
+                ],
+                "transactions": context.top_transactions[:10],
+            }
             rag_logger.log_response_gen(
                 json_parse_success=False,
                 fallback_used=True,
@@ -642,7 +802,11 @@ class AgenticRAGPipeline:
 
     async def generate_embedding(self, text: str) -> List[float]:
         import google.generativeai as genai
-        return genai.embed_content(model="models/gemini-embedding-001", content=text)["embedding"]
+        model = "models/gemini-embedding-001"
+        with observe_external_llm("gemini", model, kind="embedding") as span:
+            result = genai.embed_content(model=model, content=text)
+            span.response = result
+        return result["embedding"]
 
     async def delete_transaction_vector(self, tid: str): await self.retriever._get_pinecone().delete_transaction_vector(tid)
     async def delete_transactions_by_upload_id(self, uid: str): await self.retriever._get_pinecone().delete_transactions_by_upload_id(uid)
