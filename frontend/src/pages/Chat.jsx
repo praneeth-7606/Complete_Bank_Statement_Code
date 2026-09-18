@@ -32,14 +32,11 @@ const Chat = () => {
 
   useEffect(() => {
     if (transcript) {
-      console.log("Voice Transcript Incoming:", transcript);
       setInput(transcript)
     }
   }, [transcript])
 
   useEffect(() => {
-    console.log("Speech Recognition Status:", listening ? "Listening" : "Inactive");
-    console.log("Mic Available:", isMicrophoneAvailable);
     if (listening && !isMicrophoneAvailable) {
       toast.error("Microphone access denied")
     }
@@ -55,10 +52,8 @@ const Chat = () => {
 
   const toggleListening = () => {
     if (listening) {
-      console.log("Stopping listening...");
       SpeechRecognition.stopListening()
     } else {
-      console.log("Starting listening...");
       resetTranscript()
       SpeechRecognition.startListening({
         continuous: true,

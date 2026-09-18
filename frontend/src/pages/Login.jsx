@@ -171,6 +171,7 @@ const Login = () => {
               >
                 <Input
                   type="email"
+                  autoComplete="email"
                   label="Email Address"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -192,6 +193,7 @@ const Login = () => {
               >
                 <Input
                   type="password"
+                  autoComplete="current-password"
                   label="Password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -234,7 +236,7 @@ const Login = () => {
               className="text-center text-sm text-gray-400 mt-8"
             >
               Don't have an account?{' '}
-              <Link to="/signup" className="text-indigo-400 hover:text-indigo-300 font-bold transition-colors">
+              <Link to="/signup" className="whitespace-nowrap text-indigo-400 hover:text-indigo-300 font-bold transition-colors">
                 Sign up for free →
               </Link>
             </motion.p>

@@ -40,12 +40,24 @@ export default function Observability() {
   const [error, setError] = useState('')
   const [hours, setHours] = useState(24)
 
+  const getWithRetry = async (url, retries = 1) => {
+    try {
+      return await api.get(url)
+    } catch (err) {
+      if (retries > 0 && !err.response) {
+        await new Promise((r) => setTimeout(r, 2500))
+        return api.get(url)
+      }
+      throw err
+    }
+  }
+
   const load = useCallback(async () => {
     setLoading(true)
     try {
       const [summaryResponse, tracesResponse] = await Promise.all([
-        api.get(`/observability/summary?hours=${hours}`),
-        api.get(`/observability/traces?hours=${hours}&limit=50`),
+        getWithRetry(`/observability/summary?hours=${hours}`),
+        getWithRetry(`/observability/traces?hours=${hours}&limit=50`),
       ])
       setSummary(summaryResponse.data)
       const nextTraces = tracesResponse.data.traces || []

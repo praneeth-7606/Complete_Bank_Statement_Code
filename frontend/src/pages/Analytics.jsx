@@ -206,7 +206,7 @@ const Analytics = () => {
           topCategory ? `Highest spend: ${topCategory.name} at ₹${topCategory.total.toLocaleString('en-IN')}` : 'No spending data available',
           `Net savings: ₹${balance.toLocaleString('en-IN', { minimumFractionDigits: 2 })} (${savingsPercentage}% of income)`,
           `${statsResponse.data.data.total_transactions} transactions recorded`,
-          totalIncome > statsResponse.data.data.total_expenses ? '✅ Income exceeds expenses — great financial health!' : '⚠️ Expenses exceed income — consider reviewing your budget'
+          totalIncome === 0 && statsResponse.data.data.total_expenses === 0 ? '📤 Upload a statement to unlock personalized insights' : totalIncome > statsResponse.data.data.total_expenses ? '✅ Income exceeds expenses — great financial health!' : '⚠️ Expenses exceed income — consider reviewing your budget'
         ]
         setAnalyticsData(prev => ({
           ...prev,

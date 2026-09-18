@@ -10,8 +10,6 @@
     "lint": "eslint . --ext js,jsx --report-unused-disable-directives --max-warnings 0"
   },
   "dependencies": {
-    "@tsparticles/react": "^3.0.0",
-    "@tsparticles/slim": "^3.0.0",
     "axios": "^1.6.2",
     "date-fns": "^2.30.0",
     "framer-motion": "^10.16.16",
