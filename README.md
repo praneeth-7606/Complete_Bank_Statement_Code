@@ -1,5 +1,8 @@
 # Financial Statement Analyzer
 
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-bank--statement--analyzer.two.vercel.app-brightgreen?style=for-the-badge)](https://bank-statement-analyzer-two.vercel.app/)
+[![GitHub](https://img.shields.io/badge/GitHub-Repository-181717?style=for-the-badge&logo=github)](https://github.com/praneeth-7606/Complete_Bank_Statement_Code)
+
 An AI-powered financial workspace that converts bank-statement PDFs into searchable, categorized transactions and actionable insights. It contains a React/Vite frontend and a FastAPI/MongoDB backend.
 
 ## Features
