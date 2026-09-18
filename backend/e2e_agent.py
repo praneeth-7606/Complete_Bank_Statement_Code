@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import shutil
+import tempfile
 import time
 import uuid
 from datetime import datetime, timezone
@@ -61,9 +62,14 @@ class BrowserDriver:
         self.session = session or f"finance-e2e-{uuid.uuid4().hex[:8]}"
         configured_binary = os.getenv("AGENT_BROWSER_BIN")
         local_bin_dir = Path(__file__).resolve().parents[1] / "frontend" / "node_modules" / ".bin"
-        local_candidates = [local_bin_dir / "agent-browser.cmd", local_bin_dir / "agent-browser"]
+        local_native = local_bin_dir.parent / "agent-browser" / "bin" / "agent-browser-win32-x64.exe"
+        local_candidates = [local_native, local_bin_dir / "agent-browser.cmd", local_bin_dir / "agent-browser"]
         local_binary = next((candidate for candidate in local_candidates if candidate.is_file()), None)
-        self.binary = configured_binary or (str(local_binary) if local_binary else "agent-browser")
+        if configured_binary and configured_binary.lower().endswith((".cmd", ".bat")) and os.name == "nt":
+            configured_native = Path(configured_binary).parent.parent / "agent-browser" / "bin" / "agent-browser-win32-x64.exe"
+            self.binary = str(configured_native) if configured_native.is_file() else configured_binary
+        else:
+            self.binary = configured_binary or (str(local_binary) if local_binary else "agent-browser")
         self.artifacts.mkdir(parents=True, exist_ok=True)
 
     def _command(self, *args: str) -> List[str]:
@@ -74,9 +80,17 @@ class BrowserDriver:
         return command
 
     def _run_subprocess(self, *args: str) -> subprocess.CompletedProcess[str]:
-        return subprocess.run(
-            self._command(*args), capture_output=True, text=True, timeout=45, check=False
-        )
+        command = self._command(*args)
+        # The Windows native browser binary can keep inherited PIPE handles open
+        # while its short-lived command completes. A file-backed stream avoids
+        # that deadlock while preserving command output for evidence.
+        with tempfile.TemporaryFile(mode="w+b") as stream:
+            result = subprocess.run(
+                command, stdout=stream, stderr=stream, timeout=45, check=False
+            )
+            stream.seek(0)
+            output = stream.read().decode("utf-8", errors="replace")
+        return subprocess.CompletedProcess(command, result.returncode, output, "")
 
     def run(self, step: str, *args: str, screenshot: bool = False) -> Evidence:
         started = time.perf_counter()
@@ -122,7 +136,7 @@ def build_tools(driver: BrowserDriver):
         return driver.run("open-page", "open", target, screenshot=True).model_dump_json()
 
     @tool
-    def snapshot() -> str:
+    def snapshot(reason: str = "") -> str:
         """Capture interactive page elements and their current refs."""
         return driver.run("snapshot", "snapshot", "-i").model_dump_json()
 
@@ -145,7 +159,7 @@ def build_tools(driver: BrowserDriver):
         return driver.run("wait", *args).model_dump_json()
 
     @tool
-    def read_page() -> str:
+    def read_page(reason: str = "") -> str:
         """Read visible page text for assertions and report evidence."""
         return driver.run("read-page", "get", "text", "body").model_dump_json()
 
@@ -343,7 +357,8 @@ def main() -> None:
     parser.add_argument("--statement", default=os.getenv("E2E_STATEMENT_PATH", ""))
     parser.add_argument("--smoke-only", action="store_true", help="Run deterministic public browser checks without an LLM provider")
     args = parser.parse_args()
-    print(run(args.base_url, args.email, args.password, args.statement, args.smoke_only).model_dump_json(indent=2))
+    report = run(args.base_url, args.email, args.password, args.statement, args.smoke_only)
+    print(json.dumps(report.model_dump(mode="json"), indent=2, ensure_ascii=True))
 
 
 if __name__ == "__main__":
