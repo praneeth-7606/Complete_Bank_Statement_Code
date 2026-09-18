@@ -178,11 +178,20 @@ def build_tools(driver: BrowserDriver):
         secret = os.getenv(secret_name, "")
         if not secret:
             return json.dumps({"ok": False, "error": f"Missing configured secret: {secret_name}"})
-        args = ["fill", locator, secret] if locator.startswith("@") else ["find", "label", locator, "fill", secret]
-        evidence = driver.run("fill-configured-secret", *args)
-        evidence.output = "configured secret submitted" if evidence.ok else ""
-        evidence.error = evidence.error if not evidence.ok else None
-        return evidence.model_dump_json()
+        attempts = [["fill", locator, secret]] if locator.startswith("@") else [
+            ["find", "label", locator, "fill", secret],
+            ["find", "placeholder", locator, "fill", secret],
+        ]
+        last_evidence = None
+        for args in attempts:
+            evidence = driver.run("fill-configured-secret", *args)
+            last_evidence = evidence
+            if evidence.ok:
+                evidence.output = "configured secret submitted"
+                evidence.error = None
+                return evidence.model_dump_json()
+        last_evidence.output = ""
+        return last_evidence.model_dump_json()
 
     return [open_page, snapshot, click, fill, wait_for, read_page, capture_screenshot, upload_file, fill_configured_secret]
 
@@ -206,9 +215,11 @@ credentials or PDF passwords in the final summary.
 Application-specific scenarios:
 1. Public login page renders; signup navigation works; protected pages redirect unauthenticated users.
    Confirm that no Google sign-in control or Google OAuth prompt is present.
-2. With supplied test credentials, login redirects to the authenticated dashboard.
+2. With supplied test credentials, use fill_configured_secret for E2E_TEST_EMAIL and
+   E2E_TEST_PASSWORD, then login and confirm the authenticated dashboard.
 3. Dashboard, statements, analytics, transactions, corrections, and chat pages render without console-visible errors.
 4. Upload workflow shows validation for a non-PDF and starts processing for a supplied test PDF.
+   Use fill_configured_secret for E2E_STATEMENT_PASSWORD; never type or repeat the value directly.
 5. Processing status/logs update and statement results show transactions, categories, totals, and balances.
 6. Transaction filters and category correction update the visible row and persist after refresh.
 7. Chat accepts a safe transaction query and renders a response or a clear backend error state.
