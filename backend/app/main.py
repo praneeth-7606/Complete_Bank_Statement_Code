@@ -159,7 +159,8 @@ app.add_middleware(
         "http://127.0.0.1:5173",
         "http://localhost:59206",
         "https://bank-statement-frontend-blush.vercel.app",
-        "https://bank-statement-frontend-praneeth-7606s-projects.vercel.app"
+        "https://bank-statement-frontend-praneeth-7606s-projects.vercel.app",
+        "https://bank-statement-analyzer-two.vercel.app"
     ],
     allow_credentials=True,
     allow_methods=["*"],
