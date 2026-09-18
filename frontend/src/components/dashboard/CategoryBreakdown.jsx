@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
 import { chartVariants } from '../../utils/animations';
-import { Card } from '../common';
+import { Card } from '../ui';
 
 /**
  * CategoryBreakdown Component

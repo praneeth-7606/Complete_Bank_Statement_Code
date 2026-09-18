@@ -10,7 +10,7 @@ import {
 import Confetti from 'react-confetti';
 import { useState, useEffect } from 'react';
 import CountUp from 'react-countup';
-import MetadataGrid from '../common/MetadataGrid';
+import MetadataGrid from '../ui/MetadataGrid';
 import { formatCurrency } from '../../utils/formatters';
 import { ANIMATIONS } from '../../utils/constants';
 

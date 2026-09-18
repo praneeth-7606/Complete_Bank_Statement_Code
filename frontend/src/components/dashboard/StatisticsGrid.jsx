@@ -1,6 +1,6 @@
 import { motion } from 'framer-motion';
 import { TrendingUp, TrendingDown, Wallet, FileText } from 'lucide-react';
-import { StatCard } from '../common';
+import { StatCard } from '../ui';
 import { staggerContainer } from '../../utils/animations';
 
 /**

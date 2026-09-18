@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { motion } from 'framer-motion';
 import { ChevronDown, ChevronUp, ArrowUpDown } from 'lucide-react';
-import { CategoryBadge, EmptyState } from '../common';
+import { CategoryBadge, EmptyState } from '../ui';
 import CategoryEditableCell from './CategoryEditableCell';
 import { staggerContainer, staggerItem } from '../../utils/animations';
 
@@ -61,19 +61,21 @@ const TransactionTable = ({ transactions = [], onSort }) => {
             </tr>
           </thead>
           <tbody>
-            {transactions.map((transaction, index) => (
+            {transactions.map((transaction, index) => {
+              const rowId = transaction.id ?? `txn-${transaction.date || transaction.transaction_date}-${transaction.description || transaction.narration}-${transaction.amount || transaction.credit || transaction.debit}-${index}`
+              return (
               <motion.tr
-                key={transaction.id || index}
+                key={rowId}
                 variants={staggerItem}
                 className="border-b border-gray-100 hover:bg-gray-50 transition-colors cursor-pointer"
-                onClick={() => setExpandedRow(expandedRow === index ? null : index)}
+                onClick={() => setExpandedRow(expandedRow === rowId ? null : rowId)}
               >
                 <td className="px-6 py-4 text-sm text-gray-600">
                   {new Date(transaction.date || transaction.transaction_date).toLocaleDateString()}
                 </td>
                 <td className="px-6 py-4">
                   <p className="font-medium text-gray-900">{transaction.description || transaction.narration}</p>
-                  {expandedRow === index && transaction.reference && (
+                  {expandedRow === rowId && transaction.reference && (
                     <p className="text-xs text-gray-500 mt-1">Ref: {transaction.reference}</p>
                   )}
                 </td>
@@ -99,7 +101,8 @@ const TransactionTable = ({ transactions = [], onSort }) => {
                   </span>
                 </td>
               </motion.tr>
-            ))}
+              )
+            })}
           </tbody>
         </table>
       </div>
@@ -107,7 +110,7 @@ const TransactionTable = ({ transactions = [], onSort }) => {
       {/* Mobile Cards */}
       <motion.div variants={staggerContainer} initial="hidden" animate="show" className="md:hidden divide-y divide-gray-100">
         {transactions.map((transaction, index) => (
-          <motion.div key={transaction.id || index} variants={staggerItem} className="p-4">
+          <motion.div key={transaction.id ?? `txn-${transaction.date || transaction.transaction_date}-${transaction.description || transaction.narration}-${transaction.amount || transaction.credit || transaction.debit}-${index}`} variants={staggerItem} className="p-4">
             <div className="flex items-start justify-between mb-2">
               <div className="flex-1">
                 <p className="font-medium text-gray-900">{transaction.description || transaction.narration}</p>

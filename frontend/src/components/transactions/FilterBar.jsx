@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { Search, Filter, X, Calendar } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Button } from '../common';
+import { Button } from '../ui';
 import { useDebounce } from '../../hooks/useDebounce';
 import { TRANSACTION_CATEGORIES } from '../../utils/constants';
 

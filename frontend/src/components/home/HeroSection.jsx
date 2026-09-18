@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { ArrowRight, Play, TrendingUp, DollarSign, PieChart, BarChart } from 'lucide-react';
 import { floatingAnimation } from '../../utils/animations';
-import Button from '../common/Button';
+import Button from '../ui/Button';
 
 /**
  * HeroSection Component

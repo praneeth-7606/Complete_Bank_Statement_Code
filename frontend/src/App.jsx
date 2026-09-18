@@ -1,22 +1,33 @@
+import { Suspense, lazy } from 'react'
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { Toaster } from 'react-hot-toast'
 import { AuthProvider } from './context/AuthContext'
 import { ThemeProvider } from './context/ThemeContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import ModernLayout from './components/layout/ModernLayout'
-import Login from './pages/Login'
-import Signup from './pages/Signup'
-import Home from './pages/Home'
-import FinancialDashboard from './pages/FinancialDashboard'
-import Upload from './pages/Upload'
-import Transactions from './pages/Transactions'
-import Chat from './pages/Chat'
-import Analytics from './pages/Analytics'
-import Corrections from './pages/Corrections'
-import Statements from './pages/Statements'
-import StatementDetails from './pages/StatementDetails'
-import InvestmentChat from './pages/InvestmentChat'
-import Observability from './pages/Observability'
+
+// Route-level code splitting: each page loads on demand
+const Login = lazy(() => import('./pages/Login'))
+const Signup = lazy(() => import('./pages/Signup'))
+const Home = lazy(() => import('./pages/Home'))
+const FinancialDashboard = lazy(() => import('./pages/FinancialDashboard'))
+const Upload = lazy(() => import('./pages/Upload'))
+const Transactions = lazy(() => import('./pages/Transactions'))
+const Chat = lazy(() => import('./pages/Chat'))
+const Analytics = lazy(() => import('./pages/Analytics'))
+const Corrections = lazy(() => import('./pages/Corrections'))
+const Statements = lazy(() => import('./pages/Statements'))
+const StatementDetails = lazy(() => import('./pages/StatementDetails'))
+const InvestmentChat = lazy(() => import('./pages/InvestmentChat'))
+const Observability = lazy(() => import('./pages/Observability'))
+
+function PageLoader() {
+  return (
+    <div className="flex min-h-[60vh] items-center justify-center">
+      <div className="h-10 w-10 animate-spin rounded-full border-4 border-indigo-500 border-t-transparent" role="status" aria-label="Loading page" />
+    </div>
+  )
+}
 
 function App() {
   return (
@@ -47,6 +58,7 @@ function App() {
                 },
               }}
             />
+            <Suspense fallback={<PageLoader />}>
             <Routes>
               {/* Public Routes */}
               <Route path="/login" element={<Login />} />
@@ -108,6 +120,7 @@ function App() {
                 </ProtectedRoute>
               } />
             </Routes>
+            </Suspense>
         </AuthProvider>
       </ThemeProvider>
     </Router>

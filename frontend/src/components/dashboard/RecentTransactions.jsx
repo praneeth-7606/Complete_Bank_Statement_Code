@@ -2,7 +2,7 @@ import { motion } from 'framer-motion';
 import { Link } from 'react-router-dom';
 import { TrendingUp, TrendingDown, ArrowRight } from 'lucide-react';
 import { staggerContainer, staggerItem } from '../../utils/animations';
-import { Card, CategoryBadge, EmptyState } from '../common';
+import { Card, CategoryBadge, EmptyState } from '../ui';
 
 /**
  * RecentTransactions Component

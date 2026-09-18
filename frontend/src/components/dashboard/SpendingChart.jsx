@@ -1,7 +1,7 @@
 import { motion } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import { chartVariants } from '../../utils/animations';
-import { Card } from '../common';
+import { Card } from '../ui';
 
 /**
  * SpendingChart Component
