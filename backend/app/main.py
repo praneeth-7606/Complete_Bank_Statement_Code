@@ -1103,6 +1103,8 @@ async def get_dashboard_stats(
             query["upload_id"] = upload_id
         else:
             query["upload_id"] = {"$in": user_upload_ids}
+            # Exclude OCR-garbage rows flagged for review from aggregates
+            query["needs_review"] = {"$ne": True}
         
         # Get all transactions matching query
         transactions = await models.Transaction.find(query).to_list()
@@ -1175,6 +1177,8 @@ async def get_analytics_by_category(
             query["upload_id"] = upload_id
         else:
             query["upload_id"] = {"$in": user_upload_ids}
+            # Exclude OCR-garbage rows flagged for review from aggregates
+            query["needs_review"] = {"$ne": True}
         
         # Get all transactions matching query
         transactions = await models.Transaction.find(query).to_list()
@@ -1259,6 +1263,8 @@ async def get_analytics_by_date(
             query["upload_id"] = upload_id
         else:
             query["upload_id"] = {"$in": user_upload_ids}
+            # Exclude OCR-garbage rows flagged for review from aggregates
+            query["needs_review"] = {"$ne": True}
         
         # Get all transactions matching query
         transactions = await models.Transaction.find(query).to_list()
@@ -1485,3 +1491,60 @@ async def delete_statement(
     except Exception as e:
         logger.error(f"Error deleting statement {upload_id}: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Failed to delete statement: {str(e)}")
+
+
+@app.delete("/api/account/purge")
+async def purge_my_data(
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    """
+    Delete ALL data owned by the authenticated user: every upload record,
+    every transaction (including orphans saved under legacy id schemes),
+    and all Pinecone vectors for those uploads. Privacy / fresh-start tool.
+    Only ever touches the caller's own data.
+    """
+    try:
+        uid = current_user.user_id
+        uploads = await models.Upload.find(models.Upload.user_id == uid).to_list()
+        upload_ids = set()
+        for u in uploads:
+            upload_ids.add(u.upload_id or str(u.id))
+            upload_ids.add(str(u.id))
+
+        # 1. Vectors (best-effort per id; Pinecone failures must not block Mongo)
+        vectors_ok, vectors_failed = 0, 0
+        for oid in upload_ids:
+            try:
+                await rag_pipeline.delete_transactions_by_upload_id(oid)
+                vectors_ok += 1
+            except Exception as e:
+                vectors_failed += 1
+                logger.error(f"[WARN] Pinecone purge failed for {oid}: {e}")
+
+        # 2. ALL user transactions by owner id (catches orphans under any id scheme)
+        txn_result = await models.Transaction.find(
+            models.Transaction.user_id == uid
+        ).delete()
+
+        # 3. Upload records
+        upload_ids_list = [u.id for u in uploads]
+        uploads_deleted = 0
+        for u in uploads:
+            await u.delete()
+            uploads_deleted += 1
+
+        return {
+            "status": "success",
+            "message": f"Purged all data for user {uid}",
+            "deleted": {
+                "uploads": uploads_deleted,
+                "transactions": txn_result.deleted_count,
+                "vector_namespaces_ok": vectors_ok,
+                "vector_namespaces_failed": vectors_failed,
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error purging account data: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Failed to purge data: {str(e)}")

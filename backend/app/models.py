@@ -50,6 +50,11 @@ class Transaction(Document):
     credit: Decimal = Decimal("0.00")
     # --- END OF FIX ---
 
+    # Quarantine flag: set when OCR produces an absurd amount (e.g. merged
+    # columns). Flagged rows stay visible in the table but are excluded from
+    # dashboard/analytics aggregates so one bad row can't poison all totals.
+    needs_review: bool = False
+
     @field_validator("amount", "debit", "credit", mode="before")
     @classmethod
     def normalize_decimal_values(cls, value):

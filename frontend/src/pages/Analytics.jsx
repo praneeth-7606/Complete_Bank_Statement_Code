@@ -249,9 +249,21 @@ const Analytics = () => {
   )
 
   const savingsRate = useMemo(() => {
-    if (!analyticsData.summary.totalIncome) return 0
-    return ((analyticsData.summary.balance / analyticsData.summary.totalIncome) * 100).toFixed(1)
+    if (!analyticsData.summary.totalIncome) return '—'
+    const r = (analyticsData.summary.balance / analyticsData.summary.totalIncome) * 100
+    // Guard: absurd rates (data under review) render as '—', never -17117755.3%
+    if (!isFinite(r) || Math.abs(r) > 1000) return '—'
+    return r.toFixed(1)
   }, [analyticsData.summary])
+
+  // Indian-unit axis formatter: 1k / 1L / 1Cr (never raw 000000k)
+  const inrTick = (v) => {
+    const a = Math.abs(v)
+    if (a >= 1e7) return `${(v / 1e7).toFixed(a >= 1e9 ? 0 : 1)}Cr`
+    if (a >= 1e5) return `${(v / 1e5).toFixed(1)}L`
+    if (a >= 1e3) return `${Math.round(v / 1e3)}k`
+    return v
+  }
 
   if (loading) {
     return (
@@ -434,7 +446,7 @@ const Analytics = () => {
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
                   <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={32} />
-                  <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}k` : v} />
+                  <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={inrTick} />
                   <Tooltip content={<SlickTooltip />} />
                   <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2.5} fill="url(#gIncome)" name="Income" dot={false} activeDot={{ r: 4 }} />
                   <Area type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} fill="url(#gExpenses)" name="Expenses" dot={false} activeDot={{ r: 4 }} />
@@ -471,7 +483,7 @@ const Analytics = () => {
               <LineChart data={analyticsData.monthlyData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
                 <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={32} />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}k` : v} />
+                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={inrTick} />
                 <Tooltip content={<SlickTooltip />} />
                 <Line type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Expenses" activeDot={{ r: 4 }} />
                 <Line type="monotone" dataKey="income" stroke="#6366f1" strokeWidth={2.5} dot={false} name="Income" activeDot={{ r: 4 }} />

@@ -890,15 +890,21 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                             try: tx_date = datetime.strptime(tx_date, "%Y-%m-%d").date()
                             except: tx_date = datetime.now().date()
 
+                        _amt = float(tx.get("amount", 0))
+                        _dbt = float(tx.get("debit", 0))
+                        _crd = float(tx.get("credit", 0))
                         db_txns.append(models.Transaction(
                             date=tx_date,
                             description=tx.get("description", "No description"),
-                            amount=float(tx.get("amount", 0)),
-                            debit=float(tx.get("debit", 0)),
-                            credit=float(tx.get("credit", 0)),
+                            amount=_amt,
+                            debit=_dbt,
+                            credit=_crd,
                             category=tx.get("category", "Other"),
                             upload_id=streaming_id,
-                            user_id=state["user_id"]
+                            user_id=state["user_id"],
+                            # Quarantine OCR garbage (e.g. merged columns
+                            # producing billion-scale amounts).
+                            needs_review=max(abs(_amt), abs(_dbt), abs(_crd)) > 1_000_000_000,
                         ))
 
                     if db_txns:
