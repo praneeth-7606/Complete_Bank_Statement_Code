@@ -611,15 +611,19 @@ async def process_statement(
         )
         
         if not result.get("success"):
+            # Surface the real error text (extraction stage, quota, parse) so
+            # the UI, users, and agents can diagnose instead of guessing.
+            err_text = str(result.get("error", "Statement processing failed"))
             if reserved_upload:
                 reserved_upload.status = "failed"
-                reserved_upload.error_message = str(result.get("error", "Statement processing failed"))
+                reserved_upload.error_message = err_text
                 await reserved_upload.save()
-            await log_streamer.add_log(streaming_id, f"[FAIL] Processing failed: {result.get('error')}", "error", 100)
+            await log_streamer.add_log(streaming_id, f"[FAIL] Processing failed: {err_text}", "error", 100)
             return {
                 "status": "failed",
                 "upload_id": streaming_id,
                 "message": "Statement processing failed",
+                "error": err_text,
                 "transactions": [],
                 "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
             }
