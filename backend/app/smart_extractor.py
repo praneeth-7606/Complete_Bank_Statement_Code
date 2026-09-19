@@ -895,7 +895,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     upload.extraction_method = state["extraction_method"]
                     upload.total_transactions = len(state["categorized_transactions"])
                     upload.processing_time_seconds = round(time.time() - t_bg_start, 2)
-                    upload.insights = bg_insights.get("insights", []) if isinstance(bg_insights, dict) else []
+                    # Insights attach later in STEP 2 (bg_insights not built yet here).
                     await upload.save()
                     db_upload_id = str(upload.id)
 
