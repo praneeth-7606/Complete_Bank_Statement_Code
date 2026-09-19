@@ -1039,7 +1039,9 @@ async def get_filtered_transactions(
         user_uploads = await models.Upload.find(
             models.Upload.user_id == current_user.user_id
         ).to_list()
-        user_upload_ids = [str(u.id) for u in user_uploads]
+        # Stable id scheme: writes use the streaming upload_id, so reads
+        # must match it (ObjectId fallback covers legacy rows).
+        user_upload_ids = [u.upload_id or str(u.id) for u in user_uploads]
         
         if upload_id:
             if upload_id not in user_upload_ids:
@@ -1131,7 +1133,9 @@ async def get_dashboard_stats(
         user_uploads = await models.Upload.find(
             models.Upload.user_id == current_user.user_id
         ).to_list()
-        user_upload_ids = [str(u.id) for u in user_uploads]
+        # Stable id scheme: writes use the streaming upload_id, so reads
+        # must match it (ObjectId fallback covers legacy rows).
+        user_upload_ids = [u.upload_id or str(u.id) for u in user_uploads]
         
         if upload_id:
             if upload_id not in user_upload_ids:
@@ -1205,7 +1209,9 @@ async def get_analytics_by_category(
         user_uploads = await models.Upload.find(
             models.Upload.user_id == current_user.user_id
         ).to_list()
-        user_upload_ids = [str(u.id) for u in user_uploads]
+        # Stable id scheme: writes use the streaming upload_id, so reads
+        # must match it (ObjectId fallback covers legacy rows).
+        user_upload_ids = [u.upload_id or str(u.id) for u in user_uploads]
         
         if upload_id:
             if upload_id not in user_upload_ids:
@@ -1291,7 +1297,9 @@ async def get_analytics_by_date(
         user_uploads = await models.Upload.find(
             models.Upload.user_id == current_user.user_id
         ).to_list()
-        user_upload_ids = [str(u.id) for u in user_uploads]
+        # Stable id scheme: writes use the streaming upload_id, so reads
+        # must match it (ObjectId fallback covers legacy rows).
+        user_upload_ids = [u.upload_id or str(u.id) for u in user_uploads]
         
         if upload_id:
             if upload_id not in user_upload_ids:
