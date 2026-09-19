@@ -877,6 +877,13 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     await upload.save()
                     db_upload_id = str(upload.id)
 
+                    # IDEMPOTENT SAVE: background runs can repeat for the same
+                    # upload (retries, restarts, re-uploads). Clear prior rows
+                    # first so transactions are never duplicated.
+                    await models.Transaction.find(
+                        models.Transaction.upload_id == streaming_id
+                    ).delete()
+
                     for tx in state["categorized_transactions"]:
                         tx_date = tx.get("date")
                         if isinstance(tx_date, str):

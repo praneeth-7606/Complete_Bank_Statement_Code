@@ -111,7 +111,13 @@ const LogViewer = ({ uploadId, onComplete }) => {
           buffer = events.pop() || '';
           events.forEach((event) => {
             const data = event.split('\n').find((line) => line.startsWith('data: '));
-            if (data) handleLog({ data: data.slice(6) });
+            if (!data) return;
+            try {
+              // Backend sends JSON: { timestamp, level, progress, message }
+              handleLog(JSON.parse(data.slice(6)));
+            } catch {
+              handleLog({ level: 'info', message: data.slice(6) });
+            }
           });
         }
       } catch (err) {
@@ -256,7 +262,7 @@ const LogViewer = ({ uploadId, onComplete }) => {
                   initial={{ opacity: 0, x: -20 }}
                   animate={{ opacity: 1, x: 0 }}
                   exit={{ opacity: 0, x: 20 }}
-                  transition={{ delay: index * 0.05 }}
+                  transition={{ delay: Math.min(index * 0.05, 0.4) }}
                   className={`flex items-start space-x-3 p-3 rounded-lg border transition-all duration-300 ${getLogColor(
                     log.level
                   )}`}

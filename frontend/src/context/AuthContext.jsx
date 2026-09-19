@@ -4,7 +4,11 @@ import axios from 'axios'
 import { API_BASE_URL } from '../services/api'
 
 const AuthContext = createContext(null)
-const AUTH_REQUEST_TIMEOUT_MS = 15000
+// 60s: free-tier backend sleeps when idle and needs ~50s to cold-start.
+// Never fail a login just because the server was asleep.
+const AUTH_REQUEST_TIMEOUT_MS = 60000
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 export const useAuth = () => {
   const context = useContext(AuthContext)
@@ -88,12 +92,26 @@ export const AuthProvider = ({ children }) => {
     }
   }
 
+  const postWithWakeRetry = async (url, data) => {
+    try {
+      return await axios.post(url, data, { timeout: AUTH_REQUEST_TIMEOUT_MS })
+    } catch (error) {
+      // No response at all = server asleep or network blip. Wait for cold
+      // start, then retry once before surfacing an error.
+      if (!error.response) {
+        await sleep(5000)
+        return axios.post(url, data, { timeout: AUTH_REQUEST_TIMEOUT_MS })
+      }
+      throw error
+    }
+  }
+
   const login = async (email, password) => {
     try {
-      const response = await axios.post(`${API_URL}/auth/login`, {
+      const response = await postWithWakeRetry(`${API_URL}/auth/login`, {
         email,
         password
-      }, { timeout: AUTH_REQUEST_TIMEOUT_MS })
+      })
       
       const { access_token, refresh_token, user: userData } = response.data
       

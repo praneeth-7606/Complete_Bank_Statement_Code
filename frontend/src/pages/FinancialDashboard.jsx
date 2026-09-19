@@ -315,7 +315,7 @@ const FinancialDashboard = () => {
           transition={{ delay: 0.3 }}
           className="card"
         >
-          <h3 className="text-xl font-bold text-[var(--text-primary)] mb-4">Quick Actions</h3>
+          <h3 className="text-xl font-bold text-gray-900 mb-4">Quick Actions</h3>
           <div className="space-y-3">
             {[
               { to: '/upload', icon: UploadIcon, title: 'Upload Statement', desc: 'Process bank PDFs', color: 'blue' },
@@ -332,8 +332,8 @@ const FinancialDashboard = () => {
                     <action.icon className={`w-6 h-6 text-${action.color}-600`} />
                   </div>
                   <div>
-                    <p className="font-semibold text-[var(--text-primary)]">{action.title}</p>
-                    <p className="text-sm text-[var(--text-secondary)]">{action.desc}</p>
+                    <p className="font-semibold text-gray-900">{action.title}</p>
+                    <p className="text-sm text-gray-500">{action.desc}</p>
                   </div>
                 </motion.div>
               </Link>
@@ -349,7 +349,7 @@ const FinancialDashboard = () => {
           className="lg:col-span-2 card"
         >
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-xl font-bold text-[var(--text-primary)]">Recent Transactions</h3>
+            <h3 className="text-xl font-bold text-gray-900">Recent Transactions</h3>
             <Link to="/transactions" className="text-sm text-blue-600 hover:text-blue-700 font-semibold">
               View all →
             </Link>

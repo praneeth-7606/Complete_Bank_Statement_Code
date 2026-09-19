@@ -10,6 +10,7 @@ const Login = () => {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
+  const [wakingHint, setWakingHint] = useState(false)
   const [focusedField, setFocusedField] = useState(null)
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -17,8 +18,13 @@ const Login = () => {
   const handleSubmit = async (e) => {
     e.preventDefault()
     setLoading(true)
+    setWakingHint(false)
+    // Free-tier backend sleeps when idle: if login takes >8s, tell the user
+    // the server is waking up instead of leaving them staring at a spinner.
+    const hintTimer = setTimeout(() => setWakingHint(true), 8000)
 
     const result = await login(email, password)
+    clearTimeout(hintTimer)
 
     if (result.success) {
       toast.success('Welcome back! 🎉')
@@ -28,6 +34,7 @@ const Login = () => {
     }
 
     setLoading(false)
+    setWakingHint(false)
   }
 
   const features = [
@@ -225,6 +232,11 @@ const Login = () => {
                 >
                   {loading ? 'Logging in...' : 'Login to Dashboard'}
                 </Button>
+                {loading && wakingHint && (
+                  <p className="text-center text-xs text-indigo-300 mt-3">
+                    ⏳ Waking up the server (it sleeps when idle) — this can take up to a minute on first visit.
+                  </p>
+                )}
               </motion.div>
             </form>
 

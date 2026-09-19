@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useMemo, memo, useRef } from 'react'
 import {
   PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid,
-  Tooltip, Legend, ResponsiveContainer, AreaChart, Area, LineChart, Line
+  Tooltip, ResponsiveContainer, AreaChart, Area, LineChart, Line
 } from 'recharts'
 import {
   TrendingUp, TrendingDown, DollarSign, Calendar, Sparkles,
@@ -415,27 +415,32 @@ const Analytics = () => {
             <PeriodToggle value={period} onChange={setPeriod} />
           </div>
           {analyticsData.monthlyData.length > 0 ? (
-            <ResponsiveContainer width="100%" height={240}>
-              <AreaChart data={analyticsData.monthlyData} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gIncome" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
-                  </linearGradient>
-                  <linearGradient id="gExpenses" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
-                    <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.1)" />
-                <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
-                <Tooltip content={<SlickTooltip />} />
-                <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
-                <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2} fill="url(#gIncome)" name="Income" dot={false} />
-                <Area type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2} fill="url(#gExpenses)" name="Expenses" dot={false} />
-              </AreaChart>
-            </ResponsiveContainer>
+            <>
+              <div className="flex items-center gap-4 mb-2 text-xs font-semibold text-neutral-600">
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-emerald-500" />Income</span>
+                <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-red-500" />Expenses</span>
+              </div>
+              <ResponsiveContainer width="100%" height={260}>
+                <AreaChart data={analyticsData.monthlyData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="gIncome" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="gExpenses" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#ef4444" stopOpacity={0.3} />
+                      <stop offset="95%" stopColor="#ef4444" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
+                  <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={32} />
+                  <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}k` : v} />
+                  <Tooltip content={<SlickTooltip />} />
+                  <Area type="monotone" dataKey="income" stroke="#10b981" strokeWidth={2.5} fill="url(#gIncome)" name="Income" dot={false} activeDot={{ r: 4 }} />
+                  <Area type="monotone" dataKey="expenses" stroke="#ef4444" strokeWidth={2.5} fill="url(#gExpenses)" name="Expenses" dot={false} activeDot={{ r: 4 }} />
+                </AreaChart>
+              </ResponsiveContainer>
+            </>
           ) : (
             <div className="h-[240px] flex items-center justify-center text-neutral-600 text-sm font-medium">No timeline data yet</div>
           )}
@@ -457,17 +462,22 @@ const Analytics = () => {
           </div>
         </div>
         {analyticsData.monthlyData.length > 0 ? (
-          <ResponsiveContainer width="100%" height={200}>
-            <LineChart data={analyticsData.monthlyData} margin={{ top: 4, right: 0, left: -20, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.1)" />
-              <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} />
-              <Tooltip content={<SlickTooltip />} />
-              <Legend wrapperStyle={{ fontSize: 12, color: '#6b7280' }} />
-              <Line type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Expenses" />
-              <Line type="monotone" dataKey="income" stroke="#6366f1" strokeWidth={2.5} dot={false} name="Income" />
-            </LineChart>
-          </ResponsiveContainer>
+          <>
+            <div className="flex items-center gap-4 mb-2 text-xs font-semibold text-neutral-600">
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-amber-500" />Expenses</span>
+              <span className="flex items-center gap-1.5"><span className="w-2.5 h-2.5 rounded-full bg-indigo-500" />Income</span>
+            </div>
+            <ResponsiveContainer width="100%" height={230}>
+              <LineChart data={analyticsData.monthlyData} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="rgba(0,0,0,0.08)" vertical={false} />
+                <XAxis dataKey="date" tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} minTickGap={32} />
+                <YAxis tick={{ fill: '#6b7280', fontSize: 11 }} axisLine={false} tickLine={false} width={56} tickFormatter={(v) => v >= 1000 ? `${Math.round(v / 1000)}k` : v} />
+                <Tooltip content={<SlickTooltip />} />
+                <Line type="monotone" dataKey="expenses" stroke="#f59e0b" strokeWidth={2.5} dot={false} name="Expenses" activeDot={{ r: 4 }} />
+                <Line type="monotone" dataKey="income" stroke="#6366f1" strokeWidth={2.5} dot={false} name="Income" activeDot={{ r: 4 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </>
         ) : (
           <div className="h-[200px] flex items-center justify-center text-neutral-600 text-sm font-medium">No data available</div>
         )}

@@ -551,7 +551,7 @@ const Upload = () => {
                                   placeholder="Password (if needed)"
                                   value={passwords[file.name] || ''}
                                   onChange={(e) => handlePasswordChange(file.name, e.target.value)}
-                                  className="pl-10 pr-4 py-2 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-transparent outline-none w-48 text-sm text-[var(--text-primary)] placeholder-[var(--text-secondary)]"
+                                  className="pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none w-48 text-sm text-gray-900 placeholder-gray-400"
                                   disabled={processing}
                                 />
                               </div>
