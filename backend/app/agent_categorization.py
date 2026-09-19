@@ -335,35 +335,41 @@ class CategorizationAgent:
 
         final_results = []
         remaining_indices = []
-        
+
+        # --- PHASE 0 setup: load ALL user corrections ONCE (no N+1). ---
+        # One indexed query up front instead of one find_one per transaction.
+        correction_map = {}
+        if user_id:
+            try:
+                all_corrections = await models.Correction.find(
+                    models.Correction.user_id == user_id
+                ).to_list()
+                for c in all_corrections:
+                    if c.transaction_description_keyword:
+                        correction_map[c.transaction_description_keyword] = c.correct_category
+                logger.info(f"Loaded {len(correction_map)} user correction rules into memory.")
+            except Exception as e:
+                logger.warning(f"Error loading user corrections: {e}")
+
         for i, txn in enumerate(transactions):
             desc = txn.get('description', '')
             amt = float(txn.get('amount', 0))
             # Determine credit/debit status for rule matching
             is_credit = txn.get('type') == 'credit' or float(txn.get('credit', 0)) > 0
-            
+
             identity = self._extract_merchant_identity(desc)
-            
-            # --- PHASE 0: User Correction Priority ---
-            if user_id:
-                try:
-                    # Check if user has already corrected this specific identity
-                    correction = await models.Correction.find_one(
-                        models.Correction.user_id == user_id,
-                        models.Correction.transaction_description_keyword == identity
-                    )
-                    if correction:
-                        txn.update({
-                            "category": correction.correct_category,
-                            "subcategory": "User Preference",
-                            "confidence": 1.0,
-                            "reasoning": f"Matched previous user correction for '{identity}'",
-                            "source": "local_history"
-                        })
-                        final_results.append(txn)
-                        continue
-                except Exception as e:
-                    logger.warning(f"Error checking local history: {e}")
+
+            # --- PHASE 0: User Correction Priority (in-memory lookup) ---
+            if identity and identity in correction_map:
+                txn.update({
+                    "category": correction_map[identity],
+                    "subcategory": "User Preference",
+                    "confidence": 1.0,
+                    "reasoning": f"Matched previous user correction for '{identity}'",
+                    "source": "local_history"
+                })
+                final_results.append(txn)
+                continue
 
             # --- PHASE 1: Deterministic Rules (Investment/Dividend/Salary) ---
             rule_match = RuleEngine.match(desc, amount=amt, is_credit=is_credit)
@@ -383,27 +389,36 @@ class CategorizationAgent:
             remaining_indices.append(i)
             final_results.append(txn)
 
-        # --- PHASE 2: Contextual LLM Reasoning (PARALLEL) ---
+        # --- PHASE 2: Contextual LLM Reasoning (BOUNDED PARALLEL) ---
         if remaining_indices:
             todo_txns = [transactions[idx] for idx in remaining_indices]
-            batch_size = 20
-            
+            # Config-driven so free tier stays polite and enterprise tiers can
+            # raise throughput via env with zero code changes.
+            batch_size = max(1, settings.LLM_BATCH_SIZE)
+            max_parallel = max(1, settings.LLM_MAX_CONCURRENT_BATCHES)
+
             if streaming_id:
                 await log_streamer.add_log(streaming_id, f"LLM Brain analyzing {len(todo_txns)} merchants in parallel...", "info", 70)
-            
+
+            semaphore = asyncio.Semaphore(max_parallel)
+
+            async def _bounded_batch(*args):
+                async with semaphore:
+                    await self._process_llm_batch(*args)
+
             tasks = []
             for j in range(0, len(todo_txns), batch_size):
                 batch = todo_txns[j:j + batch_size]
-                tasks.append(self._process_llm_batch(
-                    batch, 
-                    remaining_indices, 
-                    j, 
-                    user_name, 
-                    streaming_id, 
-                    final_results, 
+                tasks.append(_bounded_batch(
+                    batch,
+                    remaining_indices,
+                    j,
+                    user_name,
+                    streaming_id,
+                    final_results,
                     transactions
                 ))
-            
+
             await asyncio.gather(*tasks)
 
         self._log_trace(final_results)

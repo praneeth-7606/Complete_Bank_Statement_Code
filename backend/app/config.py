@@ -38,6 +38,18 @@ class Settings(BaseSettings):
         MAX_UPLOAD_PAGES: int = 100
         MAX_BATCH_STATEMENTS: int = 10
 
+        # Privacy: visually redact phone/account/UPI/email spans in the PDF
+        # before it is sent to OCR providers. Default False because redaction
+        # can remove counterparty names from descriptions and hurt extraction
+        # accuracy. Descriptions sent to LLM stages are always masked instead
+        # (see node_verify). See README "Provider data-processing policy".
+        OCR_MASK_PII_BEFORE_SEND: bool = False
+
+        # LLM batching controls (categorization). Free tier: small + mostly
+        # serial. Enterprise tier: raise both via env, no code change needed.
+        LLM_BATCH_SIZE: int = 20
+        LLM_MAX_CONCURRENT_BATCHES: int = 2
+
         # This line tells Pydantic to ignore any extra variables found in the .env file
         model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 

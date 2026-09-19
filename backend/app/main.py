@@ -96,6 +96,37 @@ async def _owned_upload(upload_id: str, current_user: models.User) -> models.Upl
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+    # Recovery pass: in-process background tasks do not survive restarts, so
+    # any job still queued/running at boot died mid-flight. Mark it honestly
+    # (interrupted — never completed) instead of leaving a false "processing".
+    try:
+        stuck = await models.ProcessingJob.find(
+            {"status": {"$in": ["queued", "running"]}}
+        ).to_list()
+        for job in stuck:
+            job.status = "interrupted"
+            job.error_message = (
+                "Server restarted while post-processing. "
+                "No transactions were guaranteed persisted — please re-upload."
+            )
+            await job.save()
+            try:
+                upload = await models.Upload.find_one(
+                    models.Upload.upload_id == job.upload_id
+                )
+                if upload and upload.status == "processing":
+                    upload.status = "failed"
+                    upload.error_message = job.error_message
+                    await upload.save()
+            except Exception:
+                pass
+        if stuck:
+            import logging as _logging
+            _logging.getLogger(__name__).warning(
+                f"Recovery: marked {len(stuck)} interrupted job(s) from previous run."
+            )
+    except Exception:
+        pass
     yield
 
 app = FastAPI(
@@ -560,7 +591,8 @@ async def process_statement(
             file_size_bytes=len(upload_bytes),
             status="processing",
             user_id=user_id_str,
-        ).insert()
+        )
+        await reserved_upload.insert()
         # ============================================
         # UNIFIED HOT-PATH: Extraction -> Categorization -> Insights
         # ============================================

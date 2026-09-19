@@ -99,7 +99,7 @@ class Upload(Document):
     page_count: Optional[int] = None
     
     # Status
-    status: str = "processing"  # processing, completed, failed
+    status: str = "processing"  # processing, completed, completed_with_warnings, failed
     error_message: Optional[str] = None
     
     # AI Insights
@@ -133,9 +133,14 @@ class ProcessingJob(Document):
     job_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
     upload_id: str
     user_id: str
-    status: str = "queued"  # queued, running, completed, failed
+    status: str = "queued"  # queued, running, completed, completed_with_warnings, failed, interrupted
     stage: str = "post_processing"
     error_message: Optional[str] = None
+    # Per-stage outcomes, e.g. {"insights": "ok", "db": "ok", "vectors": "failed"}.
+    # A job is only "completed" when persistence succeeded; anything else is
+    # "completed_with_warnings" or "failed" — never silently completed.
+    stages: Dict[str, str] = {}
+    warnings: List[str] = []
     attempts: int = 0
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
     started_at: Optional[datetime.datetime] = None

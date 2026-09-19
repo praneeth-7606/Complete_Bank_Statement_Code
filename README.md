@@ -212,6 +212,23 @@ See the detailed [architecture review](docs/ARCHITECTURE_REVIEW.md) for the curr
 
 Passwords and PDF passwords must never be logged or sent to LLM providers. Mask sensitive transaction fields before AI calls. AI output is advisory; deterministic calculations remain the source of truth for financial totals.
 
+### Provider data-processing policy
+- OCR providers (Mistral, Gemini/Z.AI fallback) receive the decrypted PDF by
+  default (`OCR_MASK_PII_BEFORE_SEND=false`) because visual redaction strips
+  counterparty names from UPI lines and degrades extraction. Set
+  `OCR_MASK_PII_BEFORE_SEND=true` to redact phone/account/UPI/email spans
+  pre-OCR instead (layout-preserving white redaction, fails safe to original).
+- Descriptions sent to categorization/insights/chat LLM stages are always
+  masked; amounts/dates never leave the deterministic pipeline except as
+  aggregates. Money stays `Decimal` (paise-quantized) from save through
+  aggregation — never binary float.
+- Background persistence is idempotent per upload; job records carry honest
+  per-stage status (`completed` only when transactions persisted). In-process
+  tasks still do not survive restarts: boot marks stranded jobs `interrupted`
+  (never completed), and high-volume production must move to the Redis/Celery
+  (or Mongo job-claim) worker noted above. Batching knobs
+  (`LLM_BATCH_SIZE`, `LLM_MAX_CONCURRENT_BATCHES`) scale via env only.
+
 ## License
 
 Add the intended project license before public production distribution.

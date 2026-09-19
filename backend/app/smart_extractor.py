@@ -463,10 +463,22 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             state["timing"]["analyze"] = time.time() - t_start
             return state
 
-        def node_mask(state: ProcessingState) -> ProcessingState:
-            logger.info("   [MASK] [2/11] NODE: Masking Metadata (Deterministic)...")
+        async def node_mask(state: ProcessingState) -> ProcessingState:
+            logger.info("   [MASK] [2/11] NODE: PII redaction gate (Deterministic)...")
             t_start = time.time()
-            state["masked_pdf"] = state["file_bytes"]  
+            # Provider data policy: by default the ORIGINAL decrypted PDF goes
+            # to OCR (redaction would strip counterparty names from UPI lines
+            # and hurt extraction). Descriptions sent to every LLM stage are
+            # still masked in node_verify. Set OCR_MASK_PII_BEFORE_SEND=true
+            # to visually redact phone/account/UPI/email spans pre-OCR instead.
+            if settings.OCR_MASK_PII_BEFORE_SEND:
+                state["masked_pdf"] = await asyncio.to_thread(
+                    self._mask_pdf_bytes, state["file_bytes"]
+                )
+                logger.info("   [MASK] PII redaction applied before OCR (policy: redact).")
+            else:
+                state["masked_pdf"] = state["file_bytes"]
+                logger.info("   [MASK] Sending original PDF to OCR (policy: accuracy-first; LLM stages get masked text).")
             state["timing"]["mask"] = time.time() - t_start
             return state
 
@@ -476,7 +488,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             try:
                 # Optimized: Send whole PDF to Mistral to preserve header context across pages
                 import fitz
-                doc = fitz.open(stream=state["file_bytes"], filetype="pdf")
+                ocr_bytes = state.get("masked_pdf") or state["file_bytes"]
+                doc = fitz.open(stream=ocr_bytes, filetype="pdf")
                 logger.info(f"      -> Processing all {len(doc)} pages together for context preservation.")
                 doc.close()
 
@@ -487,7 +500,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     logger.info(f"   [ROUTER] Detected {doc_type} - Using SPECIALIZED extraction agent")
                     res = await asyncio.to_thread(
                         self._ocr_pdf_with_mistral_specialized,
-                        state["file_bytes"],
+                        ocr_bytes,
                         state["file_path"],
                         doc_type
                     )
@@ -495,8 +508,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 else:
                     logger.info(f"   [ROUTER] Detected {doc_type} - Using STANDARD bank statement extraction")
                     res = await asyncio.to_thread(
-                        self._ocr_pdf_with_mistral, 
-                        state["file_bytes"], 
+                        self._ocr_pdf_with_mistral,
+                        ocr_bytes,
                         state["file_path"]
                     )
                     state["extraction_method"] = "MISTRAL_OCR_3_SEQUENTIAL"
@@ -529,7 +542,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 if not enabled:
                     continue
                 try:
-                    doc_type, txns = extractor(state["file_bytes"], state["password"])
+                    fb = state.get("masked_pdf") or state["file_bytes"]
+                    doc_type, txns = extractor(fb, state["password"])
                     if txns:
                         state["raw_ocr_output"] = {"transactions": txns}
                         state["extraction_method"] = method
@@ -814,15 +828,31 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
 
     async def _run_post_processing_background(self, state: ProcessingState):
         """
-        COLD-PATH: Insights -> DB Storage -> Vector Indexing -> Audit Log.
+        COLD-PATH: DB Storage -> Insights -> Vector Indexing -> Audit Log.
+        Transactions persist FIRST (they are the source of truth); insights
+        and vectors are optional stages that can fail without losing data.
+        Final job status is honest: completed / completed_with_warnings / failed.
         Runs AFTER the user has already received their categorized transactions.
         """
+        from decimal import Decimal as _Decimal
+
         t_bg_start = time.time()
         streaming_id = state.get("streaming_id")
         job = await models.ProcessingJob.find_one(
             models.ProcessingJob.upload_id == streaming_id,
             models.ProcessingJob.user_id == str(state.get("user_id")),
         )
+        stage_state: Dict[str, str] = {}
+        warnings: List[str] = []
+
+        def _money(value) -> _Decimal:
+            # Keep money as Decimal quantized to paise end-to-end. Never float:
+            # binary floats silently corrupt paise (0.1 + 0.2 != 0.3).
+            try:
+                return _Decimal(str(value)).quantize(_Decimal("0.01"))
+            except Exception:
+                return _Decimal("0.00")
+
         try:
             if job:
                 job.status = "running"
@@ -831,20 +861,12 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 await job.save()
             logger.info(f"[API] [Background] Starting post-processing for {streaming_id}")
 
-            #  STEP 1: Generate Financial Insights (LLM, slow) 
-            bg_insights = {}
-            if state.get("categorized_transactions"):
-                try:
-                    logger.info("   [BRAIN] [Background] Generating Financial Insights...")
-                    analyst = agents.FinancialAnalystAgent()
-                    bg_insights = await analyst.generate_financial_insights(state["categorized_transactions"])
-                    logger.info("   [OK] [Background] Insights generated.")
-                except Exception as e:
-                    logger.error(f"Background Insights Error: {e}")
-
-            #  STEP 2: Database Storage (MongoDB) 
+            #  STEP 1: Database Storage (MongoDB) — FIRST, always.
+            # Transactions are the source of truth; insights/vectors are
+            # optional stages that must never block or lose persisted data.
             db_upload_id = None
             db_txns = []
+            db_ok = False
             if state.get("categorized_transactions"):
                 try:
                     file_hash = hashlib.sha256(state["file_bytes"]).hexdigest()
@@ -890,9 +912,9 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                             try: tx_date = datetime.strptime(tx_date, "%Y-%m-%d").date()
                             except: tx_date = datetime.now().date()
 
-                        _amt = float(tx.get("amount", 0))
-                        _dbt = float(tx.get("debit", 0))
-                        _crd = float(tx.get("credit", 0))
+                        _amt = _money(tx.get("amount", 0))
+                        _dbt = _money(tx.get("debit", 0))
+                        _crd = _money(tx.get("credit", 0))
                         db_txns.append(models.Transaction(
                             date=tx_date,
                             description=tx.get("description", "No description"),
@@ -904,16 +926,47 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                             user_id=state["user_id"],
                             # Quarantine OCR garbage (e.g. merged columns
                             # producing billion-scale amounts).
-                            needs_review=max(abs(_amt), abs(_dbt), abs(_crd)) > 1_000_000_000,
+                            needs_review=max(abs(_amt), abs(_dbt), abs(_crd)) > _Decimal("1000000000"),
                         ))
 
                     if db_txns:
                         await models.Transaction.insert_many(db_txns)
                     upload.db_save_completed = True
                     await upload.save()
+                    db_ok = True
+                    stage_state["db"] = "ok"
                     logger.info(f"   [OK] [Background] Saved {len(db_txns)} transactions to MongoDB.")
                 except Exception as e:
+                    stage_state["db"] = f"failed: {e}"
+                    warnings.append(f"DB persist failed: {e}")
                     logger.error(f"Background DB Error: {e}")
+
+            #  STEP 2: Generate Financial Insights (LLM, slow, optional).
+            # Runs AFTER persistence so a slow/rate-limited insights agent can
+            # never delay or lose otherwise-valid transactions.
+            bg_insights = {}
+            if state.get("categorized_transactions"):
+                try:
+                    logger.info("   [BRAIN] [Background] Generating Financial Insights...")
+                    analyst = agents.FinancialAnalystAgent()
+                    bg_insights = await analyst.generate_financial_insights(state["categorized_transactions"])
+                    stage_state["insights"] = "ok"
+                    logger.info("   [OK] [Background] Insights generated.")
+                except Exception as e:
+                    stage_state["insights"] = f"failed: {e}"
+                    warnings.append(f"Insights failed: {e}")
+                    logger.error(f"Background Insights Error: {e}")
+            try:
+                upload = await models.Upload.find_one(
+                    models.Upload.upload_id == streaming_id,
+                    models.Upload.user_id == str(state.get("user_id")),
+                )
+                if upload and isinstance(bg_insights, dict):
+                    upload.insights = bg_insights.get("insights", [])
+                    await upload.save()
+            except Exception as e:
+                warnings.append(f"Insights attach failed: {e}")
+                logger.error(f"Background Insights Attach Error: {e}")
 
 
             #  STEP 3: Vector Indexing (Pinecone) 
@@ -940,19 +993,23 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     await vector_db.add_transactions(tx_dicts)
                     upload.vector_index_completed = True
                     await upload.save()
+                    stage_state["vectors"] = "ok"
                     logger.info(f"   [OK] [Background] Indexed {len(tx_dicts)} vectors in Pinecone.")
                 except Exception as e:
+                    stage_state["vectors"] = f"failed: {e}"
+                    warnings.append(f"Vector indexing failed: {e}")
                     logger.warning(f"Background Vector Error: {e}")
-            
-            #  STEP 4: Audit Logging (full timings available now) 
+
+            #  STEP 4: Audit Logging (full timings available now)
+            # + HONEST final status. Completed ONLY when transactions persisted.
             try:
                 t_bg_end = time.time()
                 bg_duration = t_bg_end - t_bg_start
                 state["timing"]["background_tasks"] = bg_duration
-                
+
                 raw_txns = state["raw_ocr_output"].get("transactions", []) if state["raw_ocr_output"] else []
                 total_duration = sum(state["timing"].values())
-                
+
                 self._write_ocr_log(
                     filename=state["file_path"],
                     extraction_method=state["extraction_method"],
@@ -962,10 +1019,38 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     elapsed=total_duration,
                     timing_breakdown=state["timing"]
                 )
-                logger.info(f"   [OK] [Background] All tasks complete in {bg_duration:.1f}s.")
+                final_status = (
+                    "completed" if db_ok and not warnings
+                    else "completed_with_warnings" if db_ok
+                    else "failed"
+                )
+                logger.info(
+                    f"   [OK] [Background] Post-processing {final_status} "
+                    f"in {bg_duration:.1f}s. stages={stage_state}"
+                )
+                try:
+                    upload = await models.Upload.find_one(
+                        models.Upload.upload_id == streaming_id,
+                        models.Upload.user_id == str(state.get("user_id")),
+                    )
+                    if upload:
+                        upload.status = (
+                            "completed" if final_status == "completed"
+                            else "failed" if final_status == "failed"
+                            else "completed_with_warnings"
+                        )
+                        if warnings:
+                            upload.error_message = "; ".join(warnings)[:2000]
+                        await upload.save()
+                except Exception as e:
+                    warnings.append(f"Upload status update failed: {e}")
                 if job:
-                    job.status = "completed"
+                    job.status = final_status
                     job.stage = "complete"
+                    job.stages = dict(stage_state)
+                    job.warnings = list(warnings)
+                    if warnings and not job.error_message:
+                        job.error_message = "; ".join(warnings)[:2000]
                     job.completed_at = datetime.utcnow()
                     await job.save()
             except Exception as e:
