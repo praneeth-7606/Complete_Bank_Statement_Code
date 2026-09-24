@@ -17,13 +17,21 @@ import ProcessingStages from './processing/ProcessingStages';
 import notificationManager from '../utils/notifications';
 import { API_BASE_URL } from '../services/api';
 
-const LogViewer = ({ uploadId, onComplete }) => {
+const LogViewer = ({ uploadId, onComplete, onError }) => {
   const [logs, setLogs] = useState([]);
   const [progress, setProgress] = useState(0);
   const [isComplete, setIsComplete] = useState(false);
+  const [isFailed, setIsFailed] = useState(false);
   const [error, setError] = useState(null);
   const logsEndRef = useRef(null);
   const abortRef = useRef(null);
+  const onCompleteRef = useRef(onComplete);
+  const onErrorRef = useRef(onError);
+
+  useEffect(() => {
+    onCompleteRef.current = onComplete;
+    onErrorRef.current = onError;
+  }, [onComplete, onError]);
 
   useEffect(() => {
     if (!uploadId) return;
@@ -34,16 +42,24 @@ const LogViewer = ({ uploadId, onComplete }) => {
     const handleLog = (logEntry) => {
       try {
         
-        // Update logs
-        setLogs((prevLogs) => [...prevLogs, logEntry]);
+        // The SSE endpoint sends JSON in the `data:` field. Keep a safe
+        // fallback for plain-text events so one malformed event cannot stop
+        // the rest of the stream.
+        const parsedEntry = typeof logEntry === 'string'
+          ? (() => {
+              try { return JSON.parse(logEntry); } catch { return { level: 'info', message: logEntry }; }
+            })()
+          : logEntry;
+
+        setLogs((prevLogs) => [...prevLogs, parsedEntry]);
         
         // Update progress
-        if (logEntry.progress !== null && logEntry.progress !== undefined) {
-          setProgress(logEntry.progress);
+        if (parsedEntry.progress !== null && parsedEntry.progress !== undefined) {
+          setProgress(Number(parsedEntry.progress) || 0);
         }
         
         // Show notifications for background task completion
-        if (logEntry.message && logEntry.message.includes('Database save completed')) {
+        if (parsedEntry.message && parsedEntry.message.includes('Database save completed')) {
           toast.success('💾 Database save completed!', {
             icon: <Database className="w-5 h-5" />,
             duration: 4000,
@@ -51,7 +67,7 @@ const LogViewer = ({ uploadId, onComplete }) => {
           notificationManager.backgroundTaskComplete('Database Save');
         }
         
-        if (logEntry.message && logEntry.message.includes('Vector indexing completed')) {
+        if (parsedEntry.message && parsedEntry.message.includes('Vector indexing completed')) {
           toast.success('🔍 Search vectors created! You can now ask questions.', {
             icon: <Search className="w-5 h-5" />,
             duration: 5000,
@@ -59,7 +75,7 @@ const LogViewer = ({ uploadId, onComplete }) => {
           notificationManager.backgroundTaskComplete('Vector Indexing');
         }
         
-        if (logEntry.message && logEntry.message.includes('All background tasks completed')) {
+        if (parsedEntry.message && parsedEntry.message.includes('All background tasks completed')) {
           toast.success('🎉 All done! Your statement is fully processed and ready for Q&A.', {
             icon: <Sparkles className="w-5 h-5" />,
             duration: 6000,
@@ -72,21 +88,39 @@ const LogViewer = ({ uploadId, onComplete }) => {
         }
         
         // ── COMPLETION DETECTION ────────────────────────────────────────────
-        // Accept both the old 'complete' level AND progress >= 98 (new backend)
-        // The backend sends level:'success' at 98% and level:'info' at 100%.
-        const isProgressComplete = logEntry.progress !== undefined && logEntry.progress >= 98;
-        if (logEntry.level === 'complete' || isProgressComplete) {
+        // Only a real 100%/complete event may claim full completion. Extraction
+        // and Mongo persistence intentionally stop below 100 while durable
+        // enrichment is still queued.
+        const isProgressComplete = parsedEntry.progress !== undefined && Number(parsedEntry.progress) >= 100;
+        if (parsedEntry.level === 'error') {
+          setError(parsedEntry.message || 'Statement processing failed');
+          const errProgress = parsedEntry.progress !== undefined && parsedEntry.progress !== null
+            ? Number(parsedEntry.progress)
+            : null;
+          // Terminal failure (progress >= 100): stop spinner, notify parent.
+          // Intermediate per-file errors stay visible without ending the stream.
+          if (errProgress !== null && errProgress >= 100) {
+            setIsComplete(false);
+            setIsFailed(true);
+            setProgress(errProgress);
+            controller.abort();
+            const msg = parsedEntry.message || 'Statement processing failed';
+            if (onErrorRef.current) {
+              setTimeout(() => onErrorRef.current(msg), 1200);
+            }
+            return;
+          }
+          if (errProgress !== null) {
+            setProgress(errProgress);
+          }
+        }
+        if (parsedEntry.level === 'complete' || isProgressComplete) {
           setIsComplete(true);
           setProgress(100);
           controller.abort();
-          if (onComplete) {
-            setTimeout(() => onComplete(), 800); // brief delay so user sees 100%
+          if (onCompleteRef.current) {
+            setTimeout(() => onCompleteRef.current(), 800); // brief delay so user sees 100%
           }
-        }
-        
-        // Check for backend errors
-        if (logEntry.level === 'error') {
-          setError(logEntry.message);
         }
       } catch (err) {
         console.error('Error parsing log:', err);
@@ -130,7 +164,7 @@ const LogViewer = ({ uploadId, onComplete }) => {
     return () => {
       controller.abort();
     };
-  }, [uploadId, onComplete]);
+  }, [uploadId]);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -181,7 +215,12 @@ const LogViewer = ({ uploadId, onComplete }) => {
             animate={{ opacity: 1, x: 0 }}
             className="text-2xl font-bold text-gray-900 flex items-center"
           >
-            {isComplete ? (
+            {isFailed ? (
+              <>
+                <AlertCircle className="w-6 h-6 text-red-500 mr-2" />
+                Processing Failed
+              </>
+            ) : isComplete ? (
               <>
                 <motion.div
                   initial={{ scale: 0 }}
@@ -218,13 +257,15 @@ const LogViewer = ({ uploadId, onComplete }) => {
             animate={{ width: `${progress}%` }}
             transition={{ duration: 0.5, ease: 'easeOut' }}
             className={`absolute top-0 left-0 h-full ${
-              isComplete
+              isFailed
+                ? 'bg-gradient-to-r from-red-400 via-red-500 to-red-600'
+                : isComplete
                 ? 'bg-gradient-to-r from-green-400 via-green-500 to-green-600'
                 : 'bg-gradient-to-r from-blue-400 via-purple-500 to-purple-600'
             }`}
           >
             {/* Shimmer Effect */}
-            {!isComplete && (
+            {!isComplete && !isFailed && (
               <motion.div
                 animate={{
                   x: ['-100%', '200%'],

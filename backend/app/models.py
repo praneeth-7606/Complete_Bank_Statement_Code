@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional
 class User(Document):
     """Represents a user account in the database."""
     model_config = {"arbitrary_types_allowed": True}
-    user_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    user_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     
     # User credentials
     email: EmailStr
@@ -29,12 +29,12 @@ class User(Document):
     
     class Settings:
         name = "users"
-        indexes = ["email"]
+        indexes = ["email", "user_id"]
 
 class Transaction(Document):
     """Represents a single transaction document in the database."""
     model_config = {"arbitrary_types_allowed": True}
-    transaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    transaction_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     
     # Core transaction fields
     date: datetime.date
@@ -74,7 +74,7 @@ class Transaction(Document):
 
     class Settings:
         name = "transactions" # MongoDB collection name
-        indexes = ["user_id", "upload_id", "date", "category"]
+        indexes = ["transaction_id", "user_id", "upload_id", "date", "category"]
 
 class Upload(Document):
     """Represents a record of a file upload with comprehensive metadata."""
@@ -82,7 +82,7 @@ class Upload(Document):
     
     # Basic info
     # Stable application-level identifier shared by the API, job queue, and UI.
-    upload_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    upload_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     file_hash: Optional[str] = None
     filename: str
     timestamp: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
@@ -108,6 +108,9 @@ class Upload(Document):
     # Background task status
     db_save_completed: bool = False
     vector_index_completed: bool = False
+    insights_completed: bool = False
+    enrichment_error: Optional[str] = None
+    extraction_review: Optional[Dict[str, Any]] = None
     
     # Timestamps
     processed_at: Optional[datetime.datetime] = None
@@ -129,10 +132,12 @@ class Correction(Document):
 
 
 class ProcessingJob(Document):
-    """Durable processing state used by the API and future worker processes."""
-    job_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    """Durable, lease-based processing state shared by web and worker processes."""
+    job_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     upload_id: str
     user_id: str
+    parent_trace_id: Optional[str] = None
+    trace_context: Dict[str, str] = Field(default_factory=dict)
     status: str = "queued"  # queued, running, completed, completed_with_warnings, failed, interrupted
     stage: str = "post_processing"
     error_message: Optional[str] = None
@@ -142,19 +147,27 @@ class ProcessingJob(Document):
     stages: Dict[str, str] = {}
     warnings: List[str] = []
     attempts: int = 0
+    max_attempts: int = 5
+    locked_by: Optional[str] = None
+    lease_expires_at: Optional[datetime.datetime] = None
+    next_attempt_at: Optional[datetime.datetime] = None
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
     started_at: Optional[datetime.datetime] = None
     completed_at: Optional[datetime.datetime] = None
 
     class Settings:
         name = "processing_jobs"
-        indexes = ["job_id", "upload_id", "user_id", "status", "created_at"]
+        indexes = ["job_id", "upload_id", "user_id", "status", "created_at", "lease_expires_at", "next_attempt_at"]
 
 
 class ObservabilityTrace(Document):
     """Safe, user-scoped execution telemetry for the in-app dashboard."""
-    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()), unique=True)
+    trace_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     request_id: str
+    otel_trace_id: Optional[str] = None
+    parent_trace_id: Optional[str] = None
+    score_export_status: str = "disabled"
     user_id: Optional[str] = None
     route: str
     operation: str
@@ -164,6 +177,7 @@ class ObservabilityTrace(Document):
     duration_ms: float = 0.0
     events: List[Dict[str, Any]] = Field(default_factory=list)
     llm_calls: List[Dict[str, Any]] = Field(default_factory=list)
+    evaluation_scores: List[Dict[str, Any]] = Field(default_factory=list)
     metrics: Dict[str, Any] = Field(default_factory=dict)
     created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
 

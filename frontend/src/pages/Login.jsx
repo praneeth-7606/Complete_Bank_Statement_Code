@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Mail, Lock, LogIn, DollarSign, TrendingUp, Shield, Zap } from 'lucide-react'
+import { Mail, Lock, LogIn, DollarSign, TrendingUp, Shield, Zap, Sun, Moon } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import toast from 'react-hot-toast'
-import { Button, Input, Card } from '../components/ui'
+import { Button, Input } from '../components/ui'
 
 const Login = () => {
   const [email, setEmail] = useState('')
@@ -13,6 +14,7 @@ const Login = () => {
   const [wakingHint, setWakingHint] = useState(false)
   const [focusedField, setFocusedField] = useState(null)
   const { login } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
@@ -44,7 +46,16 @@ const Login = () => {
   ]
 
   return (
-    <div className="min-h-screen bg-[#080810] flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        className="theme-toggle absolute right-4 top-4 z-20 rounded-xl p-3 shadow-lg transition-colors hover:opacity-80"
+        aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+        title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+      >
+        {isDark ? <Sun size={20} /> : <Moon size={20} />}
+      </button>
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
@@ -79,7 +90,7 @@ const Login = () => {
           initial={{ opacity: 0, x: -50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6 }}
-          className="hidden lg:flex flex-col justify-center space-y-8 text-white"
+          className="hidden lg:flex flex-col justify-center space-y-8"
         >
           <div>
             <motion.div
@@ -93,7 +104,7 @@ const Login = () => {
               </div>
               <div>
                 <h1 className="text-4xl font-bold">FinanceAI</h1>
-                <p className="text-indigo-200">Smart Financial Management</p>
+                <p className="auth-muted">Smart Financial Management</p>
               </div>
             </motion.div>
 
@@ -113,7 +124,7 @@ const Login = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="text-lg text-indigo-200 mb-8"
+              className="auth-muted text-lg mb-8"
             >
               AI-powered insights, automated categorization, and intelligent analytics for your financial data.
             </motion.p>
@@ -126,7 +137,7 @@ const Login = () => {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5 + index * 0.1 }}
-                className="flex items-center gap-4 p-4 bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20"
+                className="auth-feature flex items-center gap-4 p-4 backdrop-blur-xl rounded-2xl"
               >
                 <div className={`w-12 h-12 bg-gradient-to-br ${feature.color} rounded-xl flex items-center justify-center`}>
                   <feature.icon className="w-6 h-6 text-white" />
@@ -144,7 +155,7 @@ const Login = () => {
           transition={{ duration: 0.6 }}
           className="flex items-center justify-center"
         >
-          <div className="w-full max-w-md bg-white/[0.03] backdrop-blur-xl rounded-3xl shadow-2xl p-10 border border-white/5">
+          <div className="auth-card w-full max-w-md backdrop-blur-xl rounded-3xl p-10">
             {/* Mobile Logo */}
             <div className="lg:hidden text-center mb-8">
               <motion.div
@@ -165,8 +176,8 @@ const Login = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
-              <p className="text-gray-400 mb-8">Login to access your financial dashboard</p>
+              <h2 className="auth-title text-3xl font-bold mb-2">Welcome Back</h2>
+              <p className="auth-muted mb-8">Login to access your financial dashboard</p>
             </motion.div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -245,7 +256,7 @@ const Login = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.7 }}
-              className="text-center text-sm text-gray-400 mt-8"
+              className="auth-muted text-center text-sm mt-8"
             >
               Don't have an account?{' '}
               <Link to="/signup" className="whitespace-nowrap text-indigo-400 hover:text-indigo-300 font-bold transition-colors">

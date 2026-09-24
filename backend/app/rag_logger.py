@@ -22,6 +22,7 @@ import logging
 import os
 import re
 import uuid
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional
 
 logger = logging.getLogger(__name__)
@@ -196,31 +197,42 @@ class RAGLogger:
         os.makedirs(os.path.dirname(log_file), exist_ok=True)
         self.log_file = log_file
         self._session_id = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        self._request_id: str = ""
-        self._user_id: str = ""
-        self._pipeline_start: Optional[datetime.datetime] = None
+        # One process serves many concurrent chat requests.  Request metadata
+        # must be context-local, otherwise a second request can overwrite the
+        # first request's id/user/timer before it finishes logging.
+        self._request_state: ContextVar[Optional[Dict[str, Any]]] = ContextVar(
+            "rag_logger_request_state", default=None
+        )
+
+    def _state(self) -> Dict[str, Any]:
+        return self._request_state.get() or {}
 
     def new_request(self, user_id: str) -> str:
         """Call at the start of each run() call. Returns the request_id."""
-        self._request_id = f"req_{uuid.uuid4().hex[:8]}"
-        self._user_id = user_id
-        self._pipeline_start = datetime.datetime.now()
-        return self._request_id
+        request_id = f"req_{uuid.uuid4().hex[:8]}"
+        self._request_state.set({
+            "request_id": request_id,
+            "user_id": user_id,
+            "pipeline_start": datetime.datetime.now(),
+        })
+        return request_id
 
     def _elapsed_ms(self) -> float:
-        if not self._pipeline_start:
+        started = self._state().get("pipeline_start")
+        if not started:
             return 0.0
-        return (datetime.datetime.now() - self._pipeline_start).total_seconds() * 1000
+        return (datetime.datetime.now() - started).total_seconds() * 1000
 
     def log_step(self, step: str, data: Any, level: str = "INFO") -> None:
         """
         Low-level: write one JSON line to the log file.
         Use the typed helpers below (log_plan, log_context, etc.) when possible.
         """
+        state = self._state()
         entry = {
             "session":    self._session_id,
-            "request_id": self._request_id,
-            "user_id":    self._user_id,
+            "request_id": state.get("request_id", ""),
+            "user_id":    state.get("user_id", ""),
             "timestamp":  datetime.datetime.now().isoformat(timespec="milliseconds"),
             "step":       step,
             "level":      level,

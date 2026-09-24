@@ -2,6 +2,7 @@
 Pinecone Vector Store - Production-Ready Implementation
 Handles vector storage and retrieval using Pinecone cloud service
 """
+import asyncio
 from typing import List, Dict, Optional
 from pinecone import Pinecone, ServerlessSpec
 import google.generativeai as genai
@@ -68,8 +69,7 @@ class PineconeVectorStore:
         embeddings = await self.embedding_agent.embed_documents(transactions)
         
         if not embeddings or len(embeddings) != len(transactions):
-            logger.error("Embedding generation failed or mismatch in count")
-            return
+            raise RuntimeError("Embedding generation failed or returned the wrong count")
         
         # Prepare vectors for Pinecone
         vectors = []
@@ -93,14 +93,36 @@ class PineconeVectorStore:
         batch_size = 100
         for i in range(0, len(vectors), batch_size):
             batch = vectors[i:i+batch_size]
-            self.index.upsert(
+            await asyncio.to_thread(
+                self.index.upsert,
                 vectors=batch,
-                namespace="transactions"  # Use namespace for organization
+                namespace="transactions",  # Use namespace for organization
             )
             logger.info(f"Upserted batch {i//batch_size + 1}: {len(batch)} vectors")
         
         logger.info(f"Successfully added {len(vectors)} transactions to Pinecone")
     
+    async def verify_transactions(self, transactions: List[Dict]) -> bool:
+        """Read back IDs and tenant metadata; eventual consistency retries are bounded."""
+        expected = {str(item["transaction_id"]): item for item in transactions}
+        for attempt in range(3):
+            valid = True
+            ids = list(expected)
+            for start in range(0, len(ids), 100):
+                response = await asyncio.to_thread(self.index.fetch, ids=ids[start:start + 100], namespace="transactions")
+                vectors = response.get("vectors", {}) if isinstance(response, dict) else response.vectors
+                for identifier in ids[start:start + 100]:
+                    vector = vectors.get(identifier)
+                    metadata = vector.get("metadata", {}) if isinstance(vector, dict) else getattr(vector, "metadata", {})
+                    if not vector or any(str(metadata.get(field)) != str(expected[identifier].get(field))
+                                         for field in ("user_id", "upload_id", "transaction_id", "date", "category", "debit", "credit")):
+                        valid = False
+            if valid:
+                return True
+            if attempt < 2:
+                await asyncio.sleep(2 ** attempt)
+        return False
+
     async def query_transactions(
         self,
         query_text: str,
@@ -197,4 +219,3 @@ class PineconeVectorStore:
         except Exception as e:
             logger.error(f"Failed to get index stats: {e}")
             return {}
-

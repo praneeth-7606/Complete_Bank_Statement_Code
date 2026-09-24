@@ -4,20 +4,27 @@ import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
 import { chatAPI } from '../services/api'
 import RAGResponseFormatter from '../components/chat/RAGResponseFormatter'
+import ChatSessionHistory from '../components/chat/ChatSessionHistory'
+import { useChatSession } from '../hooks/useChatSession'
 import { Button } from '../components/ui'
 
 // Voice Recognition Imports
 import 'regenerator-runtime/runtime'
 import SpeechRecognition, { useSpeechRecognition } from 'react-speech-recognition'
 
+const WELCOME_TEXT =
+  '👋 Hello! I\'m your AI-powered financial assistant. I can help you analyze your transactions, understand spending patterns, and provide personalized financial insights. What would you like to know?'
+
 const Chat = () => {
-  const [messages, setMessages] = useState([
-    {
-      role: 'assistant',
-      content: '👋 Hello! I\'m your AI-powered financial assistant. I can help you analyze your transactions, understand spending patterns, and provide personalized financial insights. What would you like to know?',
-      timestamp: new Date()
-    }
-  ])
+  const {
+    messages,
+    setMessages,
+    clearSession,
+    openArchived,
+    removeArchived,
+    archived,
+    activeId,
+  } = useChatSession('rag', WELCOME_TEXT)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const messagesEndRef = useRef(null)
@@ -63,10 +70,6 @@ const Chat = () => {
     }
   }
 
-  if (!browserSupportsSpeechRecognition) {
-    console.warn("Browser doesn't support speech recognition.")
-  }
-
   const handleSubmit = async (e) => {
     e.preventDefault()
 
@@ -83,20 +86,18 @@ const Chat = () => {
     setLoading(true)
 
     try {
-      // Prep history for backend: map to {role: 'user'|'assistant', content: '...'}
       const history = messages.map(m => ({
         role: m.role,
         content: typeof m.content === 'string' ? m.content : (m.content?.data?.answer || "Financial Data")
-      })).slice(-10) // Only send last 10 messages for token efficiency
+      })).slice(-10)
 
       const response = await chatAPI.sendQuery(input, history)
 
       const assistantMessage = {
         role: 'assistant',
-        content: response, // Store the entire metadata-rich object
+        content: response,
         timestamp: new Date()
       }
-
 
       setMessages(prev => [...prev, assistantMessage])
     } catch (error) {
@@ -129,112 +130,92 @@ const Chat = () => {
   }
 
   const clearChat = () => {
-    setMessages([
-      {
-        role: 'assistant',
-        content: '👋 History cleared. How can I help you now?',
-        timestamp: new Date()
-      }
-    ])
-    toast.success('Conversation history cleared')
+    clearSession()
+    toast.success('Session archived. Starting a new conversation.')
   }
 
-  return (
-    <div className="h-[calc(100vh-6rem)] flex flex-col w-full py-4">
-      {/* Chat Header - Enhanced */}
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        className="relative overflow-hidden rounded-xl sm:rounded-2xl mb-4 sm:mb-6 shadow-2xl"
-      >
-        {/* Animated Background - Darker for better contrast */}
-        <div className="absolute inset-0 bg-gradient-to-r from-primary-700 via-primary-800 to-primary-900"></div>
-        <div className="absolute inset-0 opacity-10">
-          <div className="absolute top-0 left-0 w-40 h-40 sm:w-72 sm:h-72 bg-white rounded-full filter blur-3xl animate-pulse"></div>
-          <div className="absolute bottom-0 right-0 w-40 h-40 sm:w-72 sm:h-72 bg-white rounded-full filter blur-3xl animate-pulse" style={{ animationDelay: '1s' }}></div>
-        </div>
+  const firstUserMsg = messages.find((m) => m.role === 'user')
+  const activeTitle = firstUserMsg
+    ? String(firstUserMsg.content).slice(0, 80)
+    : 'New conversation'
 
-        {/* Content */}
-        <div className="relative p-6 sm:p-8 lg:p-10">
-          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-6">
-            <div className="flex items-center gap-5 sm:gap-6 flex-1 min-w-0">
-              <motion.div
-                animate={{ rotate: [0, 360] }}
-                transition={{ duration: 25, repeat: Infinity, ease: "linear" }}
-                className="w-16 h-16 sm:w-20 sm:h-20 bg-white/20 backdrop-blur-xl rounded-2xl sm:rounded-3xl flex items-center justify-center shadow-2xl border-2 border-white/40 flex-shrink-0"
-              >
-                <Sparkles className="w-8 h-8 sm:w-10 sm:h-10 text-white" />
-              </motion.div>
-              <div className="min-w-0">
-                <h2 className="text-2xl sm:text-3xl lg:text-4xl font-extrabold text-white mb-1 sm:mb-2 flex items-center gap-3 flex-wrap tracking-tight drop-shadow-lg">
-                  Financial Intelligence
-                  <motion.span
-                    animate={{ scale: [1, 1.2, 1], rotate: [0, 10, -10, 0] }}
-                    transition={{ duration: 3, repeat: Infinity }}
-                  >
-                    💎
-                  </motion.span>
-                </h2>
-                <div className="flex items-center gap-3 text-white text-sm sm:text-base font-semibold">
-                  <span className="flex items-center gap-1.5"><Brain className="w-4 h-4" /> Agentic RAG v2.0</span>
-                  <span className="w-1.5 h-1.5 bg-white rounded-full"></span>
-                  <span>Long-term Memory Enabled</span>
-                </div>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={clearChat}
-                className="flex items-center gap-2 bg-white/20 hover:bg-white/30 backdrop-blur-lg px-4 py-2 rounded-xl border-2 border-white/30 transition-all text-white text-sm font-semibold shadow-lg"
-              >
-                <X className="w-4 h-4" /> Clear Session
-              </button>
-              <div className="hidden sm:flex items-center gap-2 bg-green-500 backdrop-blur-xl px-4 py-2 rounded-full border-2 border-green-400 shadow-xl">
-                <div className="w-2.5 h-2.5 bg-white rounded-full animate-pulse shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
-                <span className="text-white text-sm font-bold tracking-wide">AI ALIVE</span>
-              </div>
+  return (
+    <div className="h-[calc(100vh-8rem)] sm:h-[calc(100vh-9rem)] flex flex-col w-full">
+      {/* Compact toolbar header */}
+      <motion.div
+        initial={{ opacity: 0, y: -12 }}
+        animate={{ opacity: 1, y: 0 }}
+        className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3 mb-3 sm:mb-4 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl shadow-sm"
+      >
+        <div className="flex items-center gap-3 min-w-0">
+          <div className="w-9 h-9 rounded-lg bg-primary-600 flex items-center justify-center flex-shrink-0">
+            <Sparkles className="w-5 h-5 text-white" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="text-sm sm:text-base font-bold text-[var(--text-primary)] tracking-tight truncate">
+              Financial Assistant
+            </h2>
+            <div className="flex items-center gap-2 text-xs text-[var(--text-secondary)]">
+              <span className="flex items-center gap-1"><Brain className="w-3 h-3" /> Agentic RAG</span>
+              <span className="w-1 h-1 bg-[var(--text-secondary)] rounded-full"></span>
+              <span className="hidden sm:inline">Long-term Memory</span>
             </div>
           </div>
         </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="hidden sm:flex items-center gap-1.5 bg-green-500/10 dark:bg-green-500/15 px-2.5 py-1.5 rounded-full border border-green-500/30">
+            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+            <span className="text-green-600 dark:text-green-400 text-[10px] font-bold uppercase tracking-wide">Online</span>
+          </div>
+          <ChatSessionHistory
+            activeId={activeId}
+            activeTitle={activeTitle}
+            activeCount={messages.length}
+            archived={archived}
+            onOpen={openArchived}
+            onDelete={removeArchived}
+            accent="blue"
+          />
+          <button
+            onClick={clearChat}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-[var(--border-subtle)] hover:border-red-400/50 hover:bg-red-50 dark:hover:bg-red-950/30 transition-all text-[var(--text-secondary)] hover:text-red-600 dark:hover:text-red-400 text-xs font-semibold"
+          >
+            <X className="w-3.5 h-3.5" /> Clear
+          </button>
+        </div>
       </motion.div>
 
-      {/* Messages Container - Enhanced */}
-      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl bg-white/70 backdrop-blur-md border border-white/40 shadow-2xl">
-        {/* Messages Area */}
-        <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-6 space-y-4 sm:space-y-6">
+      {/* Messages container */}
+      <div className="relative flex-1 flex flex-col overflow-hidden rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] shadow-sm">
+        {/* Messages area */}
+        <div className="flex-1 overflow-y-auto p-3 sm:p-4 lg:p-5 space-y-4">
           <AnimatePresence>
             {messages.map((message, index) => {
               const isAssistant = message.role === 'assistant';
               return (
                 <motion.div
                   key={index}
-                  initial={{ opacity: 0, y: 20, scale: 0.95 }}
-                  animate={{ opacity: 1, y: 0, scale: 1 }}
-                  exit={{ opacity: 0, y: -20, scale: 0.95 }}
-                  transition={{ delay: index * 0.05, type: "spring", stiffness: 200 }}
-                  className={`flex gap-4 ${!isAssistant ? 'flex-row-reverse' : 'flex-row'}`}
+                  initial={{ opacity: 0, y: 12 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -12 }}
+                  transition={{ type: "spring", stiffness: 250, damping: 25 }}
+                  className={`flex gap-3 ${!isAssistant ? 'flex-row-reverse' : 'flex-row'}`}
                 >
-                  {/* Avatar */}
-                  <motion.div
-                    whileHover={{ scale: 1.1, rotate: 5 }}
-                    className={`w-8 h-8 sm:w-10 sm:h-10 lg:w-12 lg:h-12 rounded-lg sm:rounded-xl lg:rounded-2xl flex items-center justify-center flex-shrink-0 shadow-lg ${!isAssistant
-                      ? 'bg-gradient-to-br from-indigo-500 via-purple-500 to-pink-500'
-                      : 'bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500'
-                      }`}
-                  >
-                    {!isAssistant ? (
-                      <User className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
-                    ) : (
-                      <Bot className="w-4 h-4 sm:w-5 sm:h-5 lg:w-6 lg:h-6 text-white" />
-                    )}
-                  </motion.div>
-
-                  {/* Message Bubble */}
-                  <div className={`flex-1 max-w-[85%] sm:max-w-[80%] lg:max-w-[75%] ${!isAssistant ? 'text-right' : 'text-left'
+                  <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${!isAssistant
+                    ? 'bg-primary-600'
+                    : 'bg-[var(--bg-surface)] border border-[var(--border-subtle)]'
                     }`}>
-                    <div className={`inline-block p-4 sm:p-5 lg:p-6 rounded-2xl sm:rounded-3xl lg:rounded-[2rem] shadow-sm ${isAssistant
-                      ? 'bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-tl-none'
-                      : 'bg-gradient-to-br from-indigo-500 to-purple-600 text-white rounded-tr-none'
+                    {!isAssistant ? (
+                      <User className="w-4 h-4 text-white" />
+                    ) : (
+                      <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
+                    )}
+                  </div>
+
+                  <div className={`flex-1 max-w-[85%] sm:max-w-[80%] ${!isAssistant ? 'text-right' : 'text-left'}`}>
+                    <div className={`inline-block p-3.5 sm:p-4 rounded-2xl text-left ${isAssistant
+                      ? 'bg-[var(--bg-surface)] border border-[var(--border-subtle)] text-[var(--text-primary)] rounded-tl-none w-full'
+                      : 'bg-primary-600 text-white rounded-tr-none'
                       }`}>
                       {isAssistant ? (
                         <RAGResponseFormatter
@@ -242,17 +223,24 @@ const Chat = () => {
                           loading={false}
                         />
                       ) : (
-                        <div className="whitespace-pre-wrap text-sm sm:text-base lg:text-lg font-medium leading-relaxed tracking-tight">
+                        <div className="whitespace-pre-wrap text-sm font-medium leading-relaxed">
                           {message.content}
                         </div>
                       )}
                     </div>
-                    <div className="flex items-center gap-1 sm:gap-2 mt-1 sm:mt-2 px-2">
-                      <p className="text-xs text-[var(--text-secondary)]">
-                        {message.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                    <div className="flex items-center gap-2 mt-1 px-1">
+                      <p className="text-[10px] text-[var(--text-secondary)]">
+                        {(() => {
+                          const ts = message.timestamp instanceof Date
+                            ? message.timestamp
+                            : new Date(message.timestamp)
+                          return Number.isNaN(ts.getTime())
+                            ? ''
+                            : ts.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+                        })()}
                       </p>
                       {isAssistant && (
-                        <span className="text-xs text-[var(--text-secondary)] hidden sm:inline">• AI Response</span>
+                        <span className="text-[10px] text-[var(--text-secondary)] hidden sm:inline">• AI</span>
                       )}
                     </div>
                   </div>
@@ -263,34 +251,34 @@ const Chat = () => {
 
           {loading && (
             <motion.div
-              initial={{ opacity: 0, y: 20 }}
+              initial={{ opacity: 0, y: 12 }}
               animate={{ opacity: 1, y: 0 }}
-              className="flex gap-4"
+              className="flex gap-3"
             >
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-br from-emerald-500 via-teal-500 to-cyan-500 flex items-center justify-center shadow-xl">
-                <Bot className="w-6 h-6 text-white" />
+              <div className="w-8 h-8 rounded-lg bg-[var(--bg-surface)] border border-[var(--border-subtle)] flex items-center justify-center">
+                <Bot className="w-4 h-4 text-primary-600 dark:text-primary-400" />
               </div>
-              <div className="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-5 shadow-lg">
-                <div className="flex items-center gap-3">
-                  <Loader2 className="w-5 h-5 text-indigo-600 animate-spin" />
+              <div className="bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-2xl rounded-tl-none p-3.5">
+                <div className="flex items-center gap-2.5">
+                  <Loader2 className="w-4 h-4 text-primary-600 animate-spin" />
                   <div className="flex gap-1">
                     <motion.div
                       animate={{ scale: [1, 1.2, 1] }}
                       transition={{ duration: 0.6, repeat: Infinity, delay: 0 }}
-                      className="w-2 h-2 bg-indigo-600 rounded-full"
+                      className="w-1.5 h-1.5 bg-primary-500 rounded-full"
                     />
                     <motion.div
                       animate={{ scale: [1, 1.2, 1] }}
                       transition={{ duration: 0.6, repeat: Infinity, delay: 0.2 }}
-                      className="w-2 h-2 bg-purple-600 rounded-full"
+                      className="w-1.5 h-1.5 bg-primary-500 rounded-full"
                     />
                     <motion.div
                       animate={{ scale: [1, 1.2, 1] }}
                       transition={{ duration: 0.6, repeat: Infinity, delay: 0.4 }}
-                      className="w-2 h-2 bg-pink-600 rounded-full"
+                      className="w-1.5 h-1.5 bg-primary-500 rounded-full"
                     />
                   </div>
-                  <span className="text-sm text-[var(--text-secondary)]">AI is thinking...</span>
+                  <span className="text-xs text-[var(--text-secondary)]">Thinking...</span>
                 </div>
               </div>
             </motion.div>
@@ -299,108 +287,86 @@ const Chat = () => {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Suggested Questions - Enhanced */}
+        {/* Suggested questions */}
         {messages.length === 1 && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.3 }}
-            className="mb-4 sm:mb-6 p-4 sm:p-6 bg-[var(--bg-card)] rounded-xl sm:rounded-2xl border border-[var(--border-subtle)] shadow-xl"
+            transition={{ delay: 0.2 }}
+            className="px-3 sm:px-4 pb-3"
           >
-            <div className="flex items-center gap-2 mb-3 sm:mb-4">
-              <MessageCircle className="w-4 h-4 sm:w-5 sm:h-5 text-indigo-600" />
-              <p className="text-sm sm:text-base font-bold text-[var(--text-primary)]">Try asking me:</p>
+            <div className="flex items-center gap-1.5 mb-2 px-1">
+              <MessageCircle className="w-3.5 h-3.5 text-primary-500" />
+              <p className="text-xs font-semibold text-[var(--text-secondary)]">Try asking:</p>
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2 sm:gap-3">
+            <div className="flex gap-2 overflow-x-auto pb-1 scrollbar-hide">
               {suggestedQuestions.map((question, index) => {
                 const Icon = question.icon
                 return (
-                  <motion.button
+                  <button
                     key={index}
-                    whileHover={{ scale: 1.05, y: -2 }}
-                    whileTap={{ scale: 0.98 }}
                     onClick={() => handleSuggestedQuestion(question.text)}
-                    className="group relative overflow-hidden text-left px-3 sm:px-4 py-3 sm:py-4 bg-[var(--bg-surface)] hover:bg-[var(--bg-card)] rounded-lg sm:rounded-xl transition-all border border-[var(--border-subtle)] hover:border-indigo-500/30 shadow-sm"
+                    className="flex-shrink-0 flex items-center gap-2 px-3 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg hover:border-primary-400/50 hover:bg-primary-50 dark:hover:bg-primary-900/20 transition-all text-xs font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                   >
-                    <div className={`absolute inset-0 bg-gradient-to-br ${question.color} opacity-0 group-hover:opacity-10 transition-opacity`}></div>
-                    <div className="relative flex items-center gap-2 sm:gap-3">
-                      <div className={`w-8 h-8 sm:w-10 sm:h-10 rounded-lg bg-gradient-to-br ${question.color} flex items-center justify-center shadow-md flex-shrink-0`}>
-                        <Icon className="w-4 h-4 sm:w-5 sm:h-5 text-white" />
-                      </div>
-                      <span className="text-xs sm:text-sm font-medium text-[var(--text-secondary)] group-hover:text-[var(--text-primary)] flex-1 line-clamp-2">
-                        {question.text}
-                      </span>
-                    </div>
-                  </motion.button>
+                    <Icon className="w-3.5 h-3.5 text-primary-500" />
+                    <span className="whitespace-nowrap">{question.text}</span>
+                  </button>
                 )
               })}
             </div>
           </motion.div>
         )}
 
-        {/* Input Form - Enhanced */}
-        <div className="p-3 sm:p-4 lg:p-6 bg-[var(--bg-surface)] border-t border-[var(--border-subtle)]">
-          <form onSubmit={handleSubmit} className="space-y-2 sm:space-y-3">
-            <div className="flex gap-4 sm:gap-6 items-center">
-              <div className="flex-1 relative group">
+        {/* Input form */}
+        <div className="p-3 sm:p-4 border-t border-[var(--border-subtle)] bg-[var(--bg-surface)]">
+          <form onSubmit={handleSubmit} className="space-y-2">
+            <div className="flex gap-2 sm:gap-3 items-center">
+              <div className="flex-1 relative">
                 <input
                   type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  placeholder={listening ? "Listening... Speak now..." : "Ask me anything about your finances..."}
-                  className="w-full px-6 sm:px-8 lg:px-10 py-4 sm:py-5 lg:py-6 pr-24 sm:pr-32 rounded-2xl sm:rounded-3xl lg:rounded-[2.5rem] border border-[var(--border-subtle)] focus:border-indigo-500 focus:ring-8 focus:ring-indigo-500/10 transition-all text-sm sm:text-base lg:text-lg bg-[var(--bg-card)] hover:bg-[var(--bg-surface)] focus:bg-[var(--bg-surface)] placeholder-[var(--text-secondary)] font-medium text-[var(--text-primary)]"
+                  placeholder={listening ? "Listening... Speak now..." : "Ask about your finances..."}
+                  className="w-full px-4 sm:px-5 py-3 pr-20 rounded-xl border border-[var(--border-subtle)] focus:border-primary-500 focus:ring-2 focus:ring-primary-500/20 transition-all text-sm bg-[var(--bg-card)] placeholder:text-[var(--text-secondary)] font-medium text-[var(--text-primary)]"
                   disabled={loading}
                   autoFocus
                 />
-                <div className="absolute right-6 sm:right-8 top-1/2 -translate-y-1/2 flex items-center gap-3">
+                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1.5">
                   {browserSupportsSpeechRecognition && (
-                    <motion.button
+                    <button
                       type="button"
-                      whileHover={{ scale: 1.1 }}
-                      whileTap={{ scale: 0.9 }}
                       onClick={toggleListening}
-                      className={`p-2 rounded-full transition-all ${listening
-                        ? 'bg-red-500 text-white shadow-lg shadow-red-200'
-                        : 'bg-[var(--bg-surface)] text-[var(--text-secondary)] hover:bg-[var(--bg-card)]'
+                      className={`p-1.5 rounded-lg transition-all ${listening
+                        ? 'bg-red-500 text-white'
+                        : 'text-[var(--text-secondary)] hover:bg-[var(--bg-surface)]'
                         }`}
                     >
-                      {listening ? (
-                        <motion.div
-                          animate={{ scale: [1, 1.2, 1] }}
-                          transition={{ repeat: Infinity, duration: 1 }}
-                        >
-                          <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
-                        </motion.div>
-                      ) : (
-                        <Mic className="w-5 h-5 sm:w-6 sm:h-6" />
-                      )}
-                    </motion.button>
+                      {listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+                    </button>
                   )}
-                  <Sparkles className="w-5 h-5 sm:w-6 sm:h-6 text-indigo-400 animate-pulse" />
+                  <Sparkles className="w-4 h-4 text-primary-400" />
                 </div>
               </div>
-              <motion.button
-                whileHover={{ scale: 1.05, boxShadow: "0 20px 25px -5px rgb(79 70 229 / 0.4)" }}
-                whileTap={{ scale: 0.95 }}
+              <button
                 type="submit"
                 disabled={loading || !input.trim()}
-                className="px-6 sm:px-8 lg:px-12 py-4 sm:py-5 lg:py-6 bg-gradient-to-r from-indigo-600 via-purple-600 to-indigo-700 hover:from-indigo-700 hover:via-purple-700 hover:to-indigo-800 text-white rounded-2xl sm:rounded-3xl lg:rounded-[2.5rem] font-bold shadow-[0_10px_15px_-3px_rgb(79_70_229_/_0.3)] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-3 whitespace-nowrap min-w-[120px] sm:min-w-[180px] justify-center"
+                className={`px-4 sm:px-5 py-3 rounded-xl font-semibold transition-all flex items-center gap-2 whitespace-nowrap ${loading || !input.trim()
+                  ? 'bg-slate-300 dark:bg-slate-700 text-slate-600 dark:text-slate-400 cursor-not-allowed'
+                  : 'bg-primary-600 hover:bg-primary-700 text-white shadow-md shadow-primary-500/25'
+                  }`}
               >
                 {loading ? (
-                  <>
-                    <Loader2 className="w-5 h-5 sm:w-6 sm:h-6 animate-spin" />
-                    <span className="hidden sm:inline text-sm lg:text-base">Processing...</span>
-                  </>
+                  <Loader2 className="w-4 h-4 animate-spin" />
                 ) : (
                   <>
-                    <Send className="w-5 h-5 sm:w-6 sm:h-6" />
-                    <span className="hidden sm:inline text-sm lg:text-base tracking-wide">Send Query</span>
+                    <Send className="w-4 h-4" />
+                    <span className="hidden sm:inline text-sm">Send</span>
                   </>
                 )}
-              </motion.button>
+              </button>
             </div>
-            <p className="text-xs text-gray-500 text-center">
-              💡 Tip: Be specific with your questions for better insights
+            <p className="text-[10px] text-[var(--text-secondary)] text-center">
+              Be specific with your questions for better insights
             </p>
           </form>
         </div>

@@ -1,0 +1,29 @@
+name: Part 1 financial regression checks
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      MONGO_URI: mongodb://localhost:27017/evaluation
+      MONGO_MOCK: 'true'
+      SECRET_KEY: test-only-secret-key-not-for-production-123456
+      RUN_EMBEDDED_WORKER: 'false'
+      GEMINI_API_KEY: ''
+      MISTRAL_API_KEY: ''
+      GROQ_API_KEY: ''
+      LANGFUSE_PUBLIC_KEY: ''
+      LANGFUSE_SECRET_KEY: ''
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+        with:
+          python-version: '3.12'
+      - run: uv sync --locked
+        working-directory: backend
+      - run: uv run --locked pytest -q tests/test_part1_evaluation.py tests/test_part1_integration.py tests/test_observability.py tests/test_extraction_validation.py tests/test_post_processing.py
+        working-directory: backend
+      - run: uv run --locked python -m experiments.evaluate_part1 --dataset tests/fixtures/part1_synthetic.json
+        working-directory: backend

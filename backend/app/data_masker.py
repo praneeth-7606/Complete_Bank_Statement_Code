@@ -9,6 +9,39 @@ from typing import Dict, List, Optional
 
 class DataMasker:
     """Utility for masking sensitive data before LLM transmission"""
+
+    # Only explicit, public merchant brands and financial institutions are
+    # eligible for extraction. We intentionally do *not* turn arbitrary UPI
+    # local-parts into labels: those are often a person's name or phone number.
+    # This list is safe to pass to a hosted categorizer after the original
+    # narration has been redacted.
+    SAFE_MERCHANT_LABELS = (
+        (r"\bAMAZON|\bAMZN", "AMAZON"),
+        (r"\bFLIPKART", "FLIPKART"),
+        (r"\bMYNTRA", "MYNTRA"),
+        (r"\bSWIGGY", "SWIGGY"),
+        (r"\bZOMATO", "ZOMATO"),
+        (r"\bDOMINOS", "DOMINOS"),
+        (r"\bEATFIT", "EATFIT"),
+        (r"\bUBER", "UBER"),
+        (r"\bOLA", "OLA"),
+        (r"\bRAPIDO", "RAPIDO"),
+        (r"\bNETFLIX", "NETFLIX"),
+        (r"\bSPOTIFY", "SPOTIFY"),
+        (r"\bIRCTC", "IRCTC"),
+        (r"\bINDIGO", "INDIGO"),
+        (r"\bMAKEMYTRIP", "MAKEMYTRIP"),
+        (r"\bBSNL", "BSNL"),
+        (r"\bAIRTEL", "AIRTEL"),
+        (r"\bJIO", "JIO"),
+        (r"\bVODAFONE", "VODAFONE"),
+        (r"\bGROWW", "GROWW"),
+        (r"\bZERODHA", "ZERODHA"),
+        (r"\bUPSTOX", "UPSTOX"),
+        (r"\bINDMONEY", "INDMONEY"),
+        (r"\bICCL", "ICCL"),
+        (r"\bJM\s*FINAN(?:CIAL)?|\bJMFSERVICES", "JM FINANCIAL"),
+    )
     
     def __init__(self):
         """Initialize masker with name mapping for consistent anonymization"""
@@ -20,6 +53,10 @@ class DataMasker:
         self._account_pattern = re.compile(r'\b\d{12,16}\b')
         self._upi_pattern = re.compile(r'[\w.]+@([\w.]+)')
         self._email_pattern = re.compile(r'[\w.]+@([\w.]+\.\w+)')
+        # HDFC-style UPI narrations have several inconsistent layouts and may
+        # put a person name in any of their fields. Treat the full narration as
+        # sensitive after its safe merchant label has been extracted locally.
+        self._upi_narration_pattern = re.compile(r'\bUPI-[^\r\n]*', re.IGNORECASE)
     
     def mask_account_number(self, account: str) -> str:
         """
@@ -143,6 +180,10 @@ class DataMasker:
             return description
         
         masked = str(description)
+
+        # Mask every HDFC-style UPI narration. Safe public merchant context is
+        # retained separately in ``merchant_label`` by ``mask_transaction``.
+        masked = self._upi_narration_pattern.sub('UPI-<UPI_NARRATION_REDACTED>', masked)
         
         # Mask phone numbers (10 digits)
         masked = self._phone_pattern.sub('**********', masked)
@@ -152,11 +193,29 @@ class DataMasker:
         
         # Mask UPI IDs (keep domain for context)
         masked = self._upi_pattern.sub(r'****@\1', masked)
-        
+
         # Mask email addresses (keep domain for context)
         masked = self._email_pattern.sub(r'****@\1', masked)
         
         return masked
+
+    @classmethod
+    def extract_safe_merchant_label(cls, description: str) -> Optional[str]:
+        """Return a vetted, non-sensitive merchant label before redaction.
+
+        A label is returned only for an allow-listed public merchant or
+        institution. Personal UPI IDs, account numbers, and free-form names
+        always return ``None`` and are therefore never transmitted as a
+        merchant field.
+        """
+        if not description:
+            return None
+
+        value = str(description)
+        for pattern, label in cls.SAFE_MERCHANT_LABELS:
+            if re.search(pattern, value, flags=re.IGNORECASE):
+                return label
+        return None
     
     def mask_transaction(self, transaction: Dict) -> Dict:
         """
@@ -180,9 +239,14 @@ class DataMasker:
         # Create a copy to avoid modifying original
         masked = transaction.copy()
         
-        # Mask description field if present
+        # Extract a vetted public merchant label locally *before* masking.
+        # The original description is then redacted as usual. This gives the
+        # categorizer useful context without sending a UPI local-part or name.
         if 'description' in masked and masked['description']:
+            merchant_label = self.extract_safe_merchant_label(masked['description'])
             masked['description'] = self.mask_description(masked['description'])
+            if merchant_label:
+                masked['merchant_label'] = merchant_label
         
         # Mask narration field if present (some banks use this)
         if 'narration' in masked and masked['narration']:

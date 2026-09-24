@@ -290,11 +290,12 @@ class EmbeddingAgent:
             try:
                 # Explicitly request 768 dimensions for compatibility with Pinecone index
                 with observe_external_llm("gemini", model_name, kind="embedding") as span:
-                    result = genai.embed_content(
+                    result = await asyncio.to_thread(
+                        genai.embed_content,
                         model=model_name,
                         content=batch_content,
                         task_type="retrieval_document",
-                        output_dimensionality=768
+                        output_dimensionality=768,
                     )
                     span.response = result
                 
@@ -311,14 +312,9 @@ class EmbeddingAgent:
             except Exception as e:
                 logger.error(f"Embedding Error for batch {i//self.batch_size + 1}: {e}", 
                            exc_info=True)
-                # Return zero vectors (768-dim) for failed batch to avoid crashing Pinecone
-                # Note: Pinecone requires at least one non-zero value, but we can use a tiny value
-                # Or just skip it. But we must return the same number of vectors.
-                # Actually, Pinecone error said "Dense vectors must contain at least one non-zero value"
-                # So we use a tiny non-zero value at index 0.
-                error_vector = [0.0] * 768
-                error_vector[0] = 1e-6 
-                all_embeddings.extend([error_vector] * len(batch_content))
+                # A fake vector makes the job look successful but permanently
+                # damages retrieval quality. Fail so the durable worker retries.
+                raise RuntimeError("Embedding provider failed") from e
         
         logger.info(f"Successfully embedded {len(all_embeddings)} documents in "
                    f"{(len(documents) + self.batch_size - 1) // self.batch_size} API call(s)")

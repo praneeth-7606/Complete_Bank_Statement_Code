@@ -135,14 +135,14 @@ const Home = () => {
   ]
 
   return (
-    <div className="space-y-0 relative">
+    <div className="home-page space-y-0 relative isolate overflow-x-hidden">
       {/* Mesh gradient background overlay */}
-      <div className="fixed inset-0 -z-10 pointer-events-none">
+      <div className="home-background absolute inset-0 z-0 pointer-events-none">
         <div className="absolute inset-0 bg-gradient-to-br from-neutral-50 via-blue-50/20 to-neutral-50"></div>
       </div>
 
       {/* HERO SECTION */}
-      <section className="relative overflow-hidden py-12 sm:py-16 md:py-24 lg:py-32 bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800">
+      <section className="home-dark-surface relative overflow-hidden py-12 sm:py-16 md:py-24 lg:py-32 bg-gradient-to-br from-primary-600 via-primary-700 to-primary-800">
         {/* Animated gradient background */}
         <div className="absolute inset-0 opacity-20">
           <div className="absolute top-0 left-0 w-48 h-48 sm:w-72 sm:h-72 lg:w-96 lg:h-96 bg-white rounded-full mix-blend-overlay filter blur-3xl animate-pulse"></div>
@@ -233,7 +233,7 @@ const Home = () => {
               <motion.div
                 animate={{ y: [0, -10, 0] }}
                 transition={{ duration: 4, repeat: Infinity, ease: "easeInOut" }}
-                className="absolute top-0 right-0 w-full sm:w-72 md:w-80 bg-white/[0.03] backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-white/10 p-4 sm:p-6 z-30"
+                className="home-glass absolute top-0 right-0 w-full sm:w-72 md:w-80 rounded-2xl sm:rounded-3xl p-4 sm:p-6 z-30"
               >
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center">
@@ -241,7 +241,7 @@ const Home = () => {
                   </div>
                   <div className="font-bold text-white">Upload Statement</div>
                 </div>
-                <div className="bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-2xl p-6 shadow-xl backdrop-blur-sm">
+                <div className="home-preview-panel rounded-2xl p-6">
                   <div className="text-center">
                     <FileText className="w-8 h-8 text-indigo-400 mx-auto mb-2" />
                     <div className="text-sm text-gray-400">Drop PDF here</div>
@@ -250,7 +250,7 @@ const Home = () => {
                 <div className="space-y-2 mt-3">
                   <div className="flex items-center gap-2 text-xs">
                     <Lock className="w-4 h-4 text-gray-500" />
-                    <input type="password" placeholder="PDF Password (optional)" className="flex-1 px-3 py-2 bg-white/5 rounded-lg border border-white/10 text-xs text-white" />
+                    <input type="password" placeholder="PDF Password (optional)" className="home-preview-input flex-1 px-3 py-2 rounded-lg text-xs" />
                   </div>
                 </div>
               </motion.div>
@@ -259,7 +259,7 @@ const Home = () => {
               <motion.div
                 animate={{ y: [0, 10, 0] }}
                 transition={{ duration: 4, repeat: Infinity, ease: "easeInOut", delay: 0.5 }}
-                className="absolute top-24 sm:top-32 left-0 w-full sm:w-72 md:w-80 bg-white/[0.03] backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-white/10 p-4 sm:p-6 z-20"
+                className="home-glass absolute top-24 sm:top-32 left-0 w-full sm:w-72 md:w-80 rounded-2xl sm:rounded-3xl p-4 sm:p-6 z-20"
               >
                 <div className="flex items-center justify-between mb-4">
                   <div className="flex items-center gap-3">
@@ -285,7 +285,7 @@ const Home = () => {
               <motion.div
                 animate={{ y: [0, -15, 0] }}
                 transition={{ duration: 4, repeat: Infinity, ease: "easeInOut", delay: 1 }}
-                className="absolute bottom-0 right-0 sm:right-8 w-full sm:w-64 md:w-72 bg-white/[0.03] backdrop-blur-xl rounded-2xl sm:rounded-3xl shadow-2xl border border-white/10 p-4 sm:p-6 z-10"
+                className="home-glass absolute bottom-0 right-0 sm:right-8 w-full sm:w-64 md:w-72 rounded-2xl sm:rounded-3xl p-4 sm:p-6 z-10"
               >
                 <div className="flex items-center gap-3 mb-4">
                   <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center">
@@ -560,9 +560,9 @@ const Home = () => {
               </div>
 
               {/* Processing Status Mini Card */}
-              <div className="mt-8 bg-gradient-to-br from-green-50 to-emerald-50 rounded-2xl p-6 border border-green-200">
+              <div className="mt-8 bg-gradient-to-br from-green-50 to-emerald-50 dark:from-green-900/40 dark:to-emerald-900/40 rounded-2xl p-6 border border-green-200 dark:border-green-800/60">
                 <div className="flex items-center gap-3 mb-4">
-                  <Activity className="w-5 h-5 text-green-600" />
+                  <Activity className="w-5 h-5 text-green-600 dark:text-green-400" />
                   <div className="font-bold text-gray-900">Processing Status</div>
                 </div>
                 <div className="space-y-3">
@@ -908,7 +908,7 @@ const Home = () => {
       </section>
 
       {/* AI CHAT PREVIEW */}
-      <section className="py-20 bg-black">
+      <section className="home-dark-surface py-20 bg-black">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="grid lg:grid-cols-2 gap-12 items-center">
             {/* Left: Chat Interface Mock */}
@@ -916,7 +916,7 @@ const Home = () => {
               initial={{ opacity: 0, x: -50 }}
               whileInView={{ opacity: 1, x: 0 }}
               viewport={{ once: true }}
-              className="bg-white/[0.03] backdrop-blur-xl rounded-3xl shadow-2xl border border-white/5 p-6 h-[600px] flex flex-col"
+              className="home-glass rounded-3xl p-6 h-[600px] flex flex-col"
             >
               <div className="flex items-center gap-3 mb-6 pb-4 border-b border-white/5">
                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center">
@@ -945,26 +945,26 @@ const Home = () => {
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center flex-shrink-0">
                     <Brain className="w-4 h-4 text-white" />
                   </div>
-                  <div className="bg-white/5 rounded-2xl rounded-tl-sm px-4 py-3 max-w-md">
+                  <div className="home-glass rounded-2xl rounded-tl-sm px-4 py-3 max-w-md">
                     <p className="text-sm text-gray-300 mb-3">
                       Here are your top recurring expenses:
                     </p>
                     <div className="space-y-2">
-                      <div className="bg-white/[0.03] rounded-lg p-3 flex justify-between items-center border border-white/5">
+                      <div className="home-glass rounded-lg p-3 flex justify-between items-center">
                         <div>
                           <div className="font-semibold text-white text-sm">Netflix Premium</div>
                           <div className="text-xs text-gray-500">Monthly subscription</div>
                         </div>
                         <div className="text-sm font-bold text-rose-400">₹999</div>
                       </div>
-                      <div className="bg-white/[0.03] rounded-lg p-3 flex justify-between items-center border border-white/5">
+                      <div className="home-glass rounded-lg p-3 flex justify-between items-center">
                         <div>
                           <div className="font-semibold text-white text-sm">Gym Membership</div>
                           <div className="text-xs text-gray-500">Monthly subscription</div>
                         </div>
                         <div className="text-sm font-bold text-rose-400">₹2,500</div>
                       </div>
-                      <div className="bg-white/[0.03] rounded-lg p-3 flex justify-between items-center border border-white/5">
+                      <div className="home-glass rounded-lg p-3 flex justify-between items-center">
                         <div>
                           <div className="font-semibold text-white text-sm">Internet Bill</div>
                           <div className="text-xs text-gray-500">Monthly utility</div>
@@ -987,7 +987,7 @@ const Home = () => {
                   <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-indigo-500 to-purple-500 flex items-center justify-center flex-shrink-0">
                     <Brain className="w-4 h-4 text-white" />
                   </div>
-                  <div className="bg-white/5 rounded-2xl rounded-tl-sm px-4 py-3 max-w-md">
+                  <div className="home-glass rounded-2xl rounded-tl-sm px-4 py-3 max-w-md">
                     <p className="text-sm text-gray-300">
                       Great question! Last month you saved <span className="font-bold text-emerald-400">₹12,450</span>, which is 23% more than the previous month. Keep up the good work! 🎉
                     </p>
@@ -1012,7 +1012,7 @@ const Home = () => {
                 <input
                   type="text"
                   placeholder="Ask anything about your finances..."
-                  className="flex-1 px-4 py-3 bg-white/5 rounded-xl border border-white/10 text-white placeholder-gray-500 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className="home-preview-input flex-1 px-4 py-3 rounded-xl focus:outline-none focus:ring-2 focus:ring-indigo-500"
                 />
                 <button className="px-6 py-3 bg-gradient-to-r from-indigo-600 to-purple-600 text-white rounded-xl font-semibold hover:shadow-lg transition-all">
                   Send
@@ -1074,7 +1074,7 @@ const Home = () => {
       </section>
 
       {/* SECURITY & TRUST SECTION */}
-      <section className="py-20 bg-gradient-to-br from-gray-900 via-indigo-950 to-black">
+      <section className="home-dark-surface py-20 bg-gradient-to-br from-gray-900 via-indigo-950 to-black">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -1096,7 +1096,7 @@ const Home = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: 0 }}
-              className="bg-white/[0.03] backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-white/5 text-center"
+              className="home-glass rounded-3xl p-8 text-center"
             >
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-500 flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <Lock className="w-8 h-8 text-white" />
@@ -1112,7 +1112,7 @@ const Home = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: 0.1 }}
-              className="bg-white/[0.03] backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-white/5 text-center"
+              className="home-glass rounded-3xl p-8 text-center"
             >
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <Shield className="w-8 h-8 text-white" />
@@ -1128,7 +1128,7 @@ const Home = () => {
               whileInView={{ opacity: 1, y: 0 }}
               viewport={{ once: true }}
               transition={{ delay: 0.2 }}
-              className="bg-white/[0.03] backdrop-blur-sm rounded-3xl p-8 shadow-xl border border-white/5 text-center"
+              className="home-glass rounded-3xl p-8 text-center"
             >
               <div className="w-16 h-16 rounded-2xl bg-gradient-to-br from-green-500 to-emerald-500 flex items-center justify-center mx-auto mb-6 shadow-lg">
                 <Eye className="w-8 h-8 text-white" />
@@ -1143,7 +1143,7 @@ const Home = () => {
       </section>
 
       {/* FAQ SECTION */}
-      <section className="py-20 bg-black">
+      <section className="home-dark-surface py-20 bg-black">
         <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -1167,7 +1167,7 @@ const Home = () => {
                 whileInView={{ opacity: 1, y: 0 }}
                 viewport={{ once: true }}
                 transition={{ delay: index * 0.1 }}
-                className="bg-white/[0.03] rounded-2xl border border-white/5 overflow-hidden hover:shadow-lg transition-all"
+                className="home-glass rounded-2xl overflow-hidden hover:shadow-lg transition-all"
               >
                 <button
                   onClick={() => setExpandedFaq(expandedFaq === index ? null : index)}
@@ -1197,7 +1197,7 @@ const Home = () => {
       </section>
 
       {/* FINAL CTA */}
-      <section className="py-20 bg-transparent">
+      <section className="home-dark-surface py-20 bg-transparent">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <motion.div
             initial={{ opacity: 0, y: 20 }}
@@ -1226,7 +1226,7 @@ const Home = () => {
               <h2 className="text-4xl md:text-6xl font-bold text-white mb-6">
                 Ready to Get Started?
               </h2>
-              <p className="text-lg sm:text-xl lg:text-2xl text-[var(--text-secondary)] mb-8 sm:mb-12 max-w-2xl mx-auto lg:mx-0 leading-relaxed font-medium">
+              <p className="text-lg sm:text-xl lg:text-2xl text-indigo-100 mb-8 sm:mb-12 max-w-2xl mx-auto lg:mx-0 leading-relaxed font-medium">
                 Join thousands of users who are already managing their finances smarter with AI
               </p>
 

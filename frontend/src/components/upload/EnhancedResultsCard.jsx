@@ -53,7 +53,7 @@ const EnhancedResultsCard = ({ results, metadata, onReset }) => {
 
   const {
     total_transactions = 0,
-    message = 'Processing complete',
+    message = 'Transactions saved; insights and search indexing are still running.',
     analysis: analysisProp = {},
   } = results || {};
 
@@ -97,7 +97,7 @@ const EnhancedResultsCard = ({ results, metadata, onReset }) => {
           </div>
           <div>
             <h3 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
-              Processing Complete!
+              Transactions Saved
               <Sparkles className="w-6 h-6 text-yellow-500" />
             </h3>
             <p className="text-sm text-gray-600">{message}</p>

@@ -1,6 +1,9 @@
 import axios from 'axios';
 
-export const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8080';
+// Local development keeps the convenient backend default. Production must
+// receive an explicit VITE_API_URL instead of silently calling localhost.
+export const API_BASE_URL = import.meta.env.VITE_API_URL ||
+  (import.meta.env.DEV ? 'http://localhost:8080' : '');
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -33,6 +36,7 @@ api.interceptors.response.use(
     if (error.response && error.response.status === 401) {
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
+      localStorage.removeItem('dashboardData');
       window.location.href = '/login';
     }
 

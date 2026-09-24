@@ -207,7 +207,49 @@ def build_tools(driver: BrowserDriver):
         last_evidence.output = ""
         return last_evidence.model_dump_json()
 
-    return [open_page, snapshot, click, fill, wait_for, read_page, capture_screenshot, upload_file, fill_configured_secret]
+    @tool
+    def verify_latest_backend_state(reason: str = "") -> str:
+        """Verify latest upload persistence/enrichment through authenticated APIs without exposing financial rows."""
+        script = r"""(async () => {
+          const token = localStorage.getItem('access_token');
+          const apiRequest = performance.getEntriesByType('resource').map(e => e.name).reverse()
+            .find(url => url.includes('/process-statement') || url.includes('/statements'));
+          if (!token || !apiRequest) return JSON.stringify({ok:false,error:'No authenticated API request was observed'});
+          const origin = new URL(apiRequest).origin;
+          const headers = {Authorization: `Bearer ${token}`};
+          const listResponse = await fetch(`${origin}/statements/`, {headers});
+          if (!listResponse.ok) return JSON.stringify({ok:false,error:`Statements API ${listResponse.status}`});
+          const listBody = await listResponse.json();
+          const statements = listBody.statements || listBody || [];
+          if (!statements.length) return JSON.stringify({ok:false,error:'No persisted statement found'});
+          const latest = statements[0];
+          const uploadId = latest.upload_id;
+          const [statusResponse, detailResponse] = await Promise.all([
+            fetch(`${origin}/background-status/${encodeURIComponent(uploadId)}`, {headers}),
+            fetch(`${origin}/statement/${encodeURIComponent(uploadId)}`, {headers})
+          ]);
+          const status = await statusResponse.json();
+          const detail = await detailResponse.json();
+          const count = (detail.transactions || []).length;
+          return JSON.stringify({
+            ok: statusResponse.ok && detailResponse.ok && status.db_save_completed === true && count > 0,
+            upload_id: uploadId,
+            persisted_transactions: count,
+            status: status.status,
+            db_save_completed: status.db_save_completed,
+            insights_completed: status.insights_completed,
+            vector_index_completed: status.vector_index_completed,
+            all_tasks_completed: status.all_tasks_completed,
+            error: status.error || null
+          });
+        })()"""
+        return driver.run("verify-latest-backend-state", "eval", script, screenshot=True).model_dump_json()
+
+    return [
+        open_page, snapshot, click, fill, wait_for, read_page,
+        capture_screenshot, upload_file, fill_configured_secret,
+        verify_latest_backend_state,
+    ]
 
 
 def create_agent(driver: BrowserDriver):
@@ -235,6 +277,9 @@ Application-specific scenarios:
 4. Upload workflow shows validation for a non-PDF and starts processing for a supplied test PDF.
    Use fill_configured_secret for E2E_STATEMENT_PASSWORD; never type or repeat the value directly.
 5. Processing status/logs update and statement results show transactions, categories, totals, and balances.
+   "Transactions Saved" is only an intermediate success. Call verify_latest_backend_state after upload,
+   and do not report full success unless Mongo persistence has a positive transaction count. Full
+   enrichment succeeds only when insights_completed, vector_index_completed, and all_tasks_completed are true.
 6. Transaction filters and category correction update the visible row and persist after refresh.
 7. Chat accepts a safe transaction query and renders a response or a clear backend error state.
 8. Logout clears the session and protected routes redirect to login.
@@ -315,6 +360,16 @@ def run(base_url: str, email: str = "", password: str = "", statement: str = "",
     statement_note = f"Use this test fixture if present: {statement}" if statement else "No statement fixture supplied; validate upload UI only."
     prompt = f"Run the complete application E2E suite against {base_url}. {credentials} {statement_note}"
     try:
+        if email:
+            os.environ["E2E_TEST_EMAIL"] = email
+        if password:
+            os.environ["E2E_TEST_PASSWORD"] = password
+        if statement:
+            resolved_statement = str(Path(statement).expanduser().resolve())
+            os.environ["E2E_STATEMENT_PATH"] = resolved_statement
+            allowed = [item for item in os.getenv("E2E_ALLOWED_FILES", "").split(os.pathsep) if item]
+            if resolved_statement not in allowed:
+                os.environ["E2E_ALLOWED_FILES"] = os.pathsep.join([*allowed, resolved_statement])
         if not shutil.which(driver.binary) and not Path(driver.binary).is_file():
             report.status = "blocked"
             report.issues.append(f"Browser CLI not found: {driver.binary}")

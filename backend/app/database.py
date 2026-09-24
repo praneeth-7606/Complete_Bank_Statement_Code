@@ -5,11 +5,18 @@ from . import models
 
 async def init_db():
     """Initializes the MongoDB database connection and Beanie."""
-    client = AsyncIOMotorClient(settings.MONGO_URI)
+    if settings.MONGO_MOCK:
+        from mongomock_motor import AsyncMongoMockClient
+
+        client = AsyncMongoMockClient()
+        database = client.get_database("financial_e2e")
+    else:
+        client = AsyncIOMotorClient(settings.MONGO_URI)
+        database = client.get_default_database()
     
     # Initialize Beanie with the Document models
     await init_beanie(
-        database=client.get_default_database(),
+        database=database,
         document_models=[
             models.User,
             models.Upload,

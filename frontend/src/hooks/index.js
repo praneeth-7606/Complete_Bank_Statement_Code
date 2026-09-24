@@ -8,3 +8,4 @@ export { useIntersectionObserver } from './useIntersectionObserver';
 export { useMediaQuery, useIsMobile, useIsTablet, useIsDesktop, useIsLargeDesktop } from './useMediaQuery';
 export { useDebounce } from './useDebounce';
 export { useAnimation, useHoverAnimation, useFocusAnimation } from './useAnimation';
+export { useChatSession, clearAllChatNamespaces } from './useChatSession';

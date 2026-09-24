@@ -13,7 +13,6 @@ import {
   FileText,
   User,
   LogOut,
-  Settings,
   TrendingUp,
   Sun,
   Moon
@@ -32,7 +31,7 @@ const Navbar = () => {
   const location = useLocation();
   const navigate = useNavigate();
   const { user, logout } = useAuth();
-  const { theme, toggleTheme, isDark } = useTheme();
+  const { toggleTheme, isDark } = useTheme();
 
   // Handle scroll effect
   useEffect(() => {
@@ -57,7 +56,9 @@ const Navbar = () => {
   ];
 
   // Check if link is active
-  const isActive = (path) => location.pathname === path;
+  const isActive = (path) => path === '/observability'
+    ? location.pathname === path || location.pathname.startsWith('/observability/')
+    : location.pathname === path;
 
   // Handle logout
   const handleLogout = () => {
@@ -68,15 +69,15 @@ const Navbar = () => {
   return (
     <motion.nav
       className={`fixed top-0 left-0 right-0 z-40 transition-all duration-300 ${isScrolled
-        ? 'bg-white/90 backdrop-blur-lg border-b border-neutral-200 shadow-lg'
-        : 'bg-white/70 backdrop-blur-md border-b border-white/40'
+        ? 'bg-[var(--nav-bg)] backdrop-blur-lg border-b shadow-lg'
+        : 'bg-[var(--nav-bg)] backdrop-blur-md border-b'
         }`}
       initial={{ y: -100 }}
       animate={{ y: 0 }}
       transition={{ duration: 0.3 }}
     >
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="flex items-center justify-between h-16">
+      <div className="max-w-[1600px] mx-auto px-4 sm:px-6 lg:px-8">
+        <div className="flex items-center justify-between h-16 gap-4">
           {/* Logo */}
           <Link to={user ? '/dashboard' : '/'} className="flex items-center space-x-2">
             <div className="w-10 h-10 bg-gradient-to-br from-primary-600 to-primary-700 rounded-xl flex items-center justify-center shadow-lg">
@@ -87,16 +88,16 @@ const Navbar = () => {
 
           {/* Desktop Navigation */}
           {user && (
-            <div className="hidden md:flex items-center space-x-1">
+            <div className="hidden md:flex items-center space-x-1 min-w-0 overflow-x-auto scrollbar-hide">
               {navLinks.map((link) => {
                 const Icon = link.icon;
                 return (
                   <Link
                     key={link.path}
                     to={link.path}
-                    className={`relative px-4 py-2 rounded-lg transition-colors ${isActive(link.path)
+                    className={`relative px-3 lg:px-4 py-2 rounded-lg transition-colors shrink-0 ${isActive(link.path)
                       ? 'text-primary-600 bg-primary-50 font-semibold'
-                      : 'text-neutral-700 hover:text-primary-600 hover:bg-neutral-50 font-medium'
+                      : 'text-[var(--text-secondary)] hover:text-primary-600 hover:bg-[var(--bg-card)] font-medium'
                       }`}
                   >
                     <div className="flex items-center space-x-2">
@@ -117,7 +118,7 @@ const Navbar = () => {
           )}
 
           {/* Right Side */}
-          <div className="flex items-center space-x-4">
+          <div className="flex items-center space-x-3 shrink-0 pl-2">
             {user ? (
               <>
                 {/* Theme Toggle */}
@@ -135,10 +136,10 @@ const Navbar = () => {
                     onClick={() => setIsProfileOpen(!isProfileOpen)}
                     className="flex items-center space-x-2 p-2 rounded-lg hover:bg-[var(--bg-card)] transition-colors"
                   >
-                    <div className="w-8 h-8 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center">
+                    <div className="w-8 h-8 bg-gradient-to-br from-primary-500 to-primary-600 rounded-full flex items-center justify-center shrink-0 ring-2 ring-white/20 dark:ring-white/10">
                       <User size={16} className="text-white" />
                     </div>
-                    <span className="hidden md:block text-sm font-medium text-[var(--text-primary)]">
+                    <span className="hidden md:block text-sm font-medium text-[var(--text-primary)] whitespace-nowrap">
                       {user.email?.split('@')[0]}
                     </span>
                   </button>
@@ -154,13 +155,6 @@ const Navbar = () => {
                       <div className="px-4 py-2 border-b border-[var(--border-subtle)]">
                         <p className="text-sm font-medium text-[var(--text-primary)]">{user.email}</p>
                       </div>
-                      <button
-                        onClick={() => navigate('/settings')}
-                        className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-[var(--text-secondary)] hover:bg-[var(--bg-card)] transition-colors"
-                      >
-                        <Settings size={16} />
-                        <span>Settings</span>
-                      </button>
                       <button
                         onClick={handleLogout}
                         className="w-full flex items-center space-x-2 px-4 py-2 text-sm text-rose-400 hover:bg-rose-500/10 transition-colors"
@@ -184,7 +178,7 @@ const Navbar = () => {
               <div className="flex items-center space-x-4">
                 <Link
                   to="/login"
-                  className="text-gray-700 hover:text-indigo-600 font-medium transition-colors"
+                  className="text-[var(--text-primary)] hover:text-indigo-600 font-medium transition-colors"
                 >
                   Login
                 </Link>

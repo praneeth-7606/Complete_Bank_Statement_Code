@@ -46,7 +46,15 @@ export default function StatementDetails() {
         setError('Failed to fetch statement details');
       }
     } catch (err) {
-      setError(err.message || 'Failed to fetch statement details');
+      const status = err.response?.status;
+      const detail = err.response?.data?.detail;
+      if (status === 404) {
+        setError('This statement could not be found. It may have been deleted.');
+      } else if (status === 401) {
+        setError('Your session has expired. Please log in again.');
+      } else {
+        setError(detail || 'Failed to load statement details. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
@@ -58,7 +66,7 @@ export default function StatementDetails() {
     // Search filter
     if (searchTerm) {
       filtered = filtered.filter(t =>
-        t.description.toLowerCase().includes(searchTerm.toLowerCase())
+        String(t.description || '').toLowerCase().includes(searchTerm.toLowerCase())
       );
     }
 
@@ -111,15 +119,15 @@ export default function StatementDetails() {
 
   const categories = [...new Set(transactions.map(t => t.category))];
 
-  const totalDebit = transactions.reduce((sum, t) => sum + t.debit, 0);
-  const totalCredit = transactions.reduce((sum, t) => sum + t.credit, 0);
+  const totalDebit = transactions.reduce((sum, t) => sum + (Number(t.debit) || 0), 0);
+  const totalCredit = transactions.reduce((sum, t) => sum + (Number(t.credit) || 0), 0);
 
   if (loading) {
     return (
       <div className="flex items-center justify-center py-20">
         <div className="text-center">
           <Loader className="w-12 h-12 text-indigo-500 animate-spin mx-auto mb-4" />
-          <p className="text-gray-400">Loading statement details...</p>
+          <p className="text-gray-500">Loading statement details...</p>
         </div>
       </div>
     );
@@ -128,12 +136,13 @@ export default function StatementDetails() {
   if (error) {
     return (
       <div className="flex items-center justify-center py-20">
-        <div className="text-center">
+        <div className="card max-w-md w-full text-center p-8">
           <AlertCircle className="w-12 h-12 text-rose-500 mx-auto mb-4" />
-          <p className="text-rose-400 mb-4">{error}</p>
+          <h2 className="text-xl font-bold text-gray-900 mb-2">Statement unavailable</h2>
+          <p className="text-gray-600 mb-6">{error}</p>
           <button
             onClick={() => navigate('/statements')}
-            className="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700"
+            className="px-5 py-2.5 bg-indigo-600 text-[var(--text-primary)] rounded-lg hover:bg-indigo-700 font-medium transition-colors"
           >
             Back to Statements
           </button>
@@ -149,24 +158,24 @@ export default function StatementDetails() {
         <div className="mb-6">
           <button
             onClick={() => navigate('/statements')}
-            className="flex items-center text-gray-400 hover:text-white mb-4 transition-colors"
+            className="flex items-center text-gray-500 hover:text-gray-900 dark:hover:text-[var(--text-primary)] mb-4 transition-colors"
           >
             <ArrowLeft className="w-5 h-5 mr-2" />
             Back to Statements
           </button>
           <div className="flex items-start justify-between">
             <div>
-              <h1 className="text-3xl sm:text-4xl font-black bg-gradient-to-r from-white to-gray-400 bg-clip-text text-transparent mb-2">
+              <h1 className="text-3xl sm:text-4xl font-black text-gray-900 dark:from-white dark:to-gray-400 mb-2">
                 {statement?.filename}
               </h1>
-              <p className="text-gray-400">
+              <p className="text-gray-500">
                 {statement?.bank_name} • {transactions.length} transactions
               </p>
             </div>
             <button
               onClick={() => setShowDeleteConfirm(true)}
               disabled={deleting}
-              className="px-4 py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="px-4 py-2 bg-red-500 text-[var(--text-primary)] rounded-lg hover:bg-red-600 transition-colors flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {deleting ? (
                 <Loader className="w-4 h-4 animate-spin" />
@@ -181,11 +190,11 @@ export default function StatementDetails() {
         {/* Delete Confirmation Modal */}
         {showDeleteConfirm && (
           <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-            <div className="bg-[#0f0f1a] rounded-xl border border-white/10 max-w-md w-full p-6 shadow-2xl">
+            <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] max-w-md w-full p-6 shadow-2xl">
               <div className="flex items-start space-x-3 mb-4">
                 <AlertCircle className="w-6 h-6 text-red-600 mt-0.5" />
                 <div className="flex-1">
-                  <h3 className="text-xl font-bold text-white mb-2">
+                  <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">
                     Confirm Deletion
                   </h3>
                   <p className="text-gray-400 mb-3">
@@ -208,14 +217,14 @@ export default function StatementDetails() {
                 <button
                   onClick={handleDeleteStatement}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition-colors font-medium disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-red-600 text-[var(--text-primary)] rounded-lg hover:bg-red-700 transition-colors font-medium disabled:opacity-50"
                 >
                   {deleting ? 'Deleting...' : 'Yes, Delete'}
                 </button>
                 <button
                   onClick={() => setShowDeleteConfirm(false)}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2 bg-white/[0.05] text-white rounded-lg hover:bg-white/[0.1] transition-colors font-medium border border-white/10 disabled:opacity-50"
+                  className="flex-1 px-4 py-2 bg-[var(--bg-surface)] text-[var(--text-primary)] rounded-lg hover:opacity-80 transition-colors font-medium border border-[var(--border-subtle)] disabled:opacity-50"
                 >
                   Cancel
                 </button>
@@ -225,42 +234,42 @@ export default function StatementDetails() {
         )}
 
         {/* Statement Info Card */}
-        <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 mb-6">
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-6 mb-6">
           <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
             <div>
               <p className="text-sm text-gray-500 mb-1">Bank</p>
-              <p className="text-lg font-semibold text-white">{statement?.bank_name}</p>
+              <p className="text-lg font-semibold text-[var(--text-primary)]">{statement?.bank_name}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Extraction Method</p>
-              <p className="text-lg font-semibold text-white">{statement?.extraction_method}</p>
+              <p className="text-lg font-semibold text-[var(--text-primary)]">{statement?.extraction_method}</p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Processing Time</p>
-              <p className="text-lg font-semibold text-white">
+              <p className="text-lg font-semibold text-[var(--text-primary)]">
                 {statement?.processing_time_seconds?.toFixed(2)}s
               </p>
             </div>
             <div>
               <p className="text-sm text-gray-500 mb-1">Pages</p>
-              <p className="text-lg font-semibold text-white">{statement?.page_count}</p>
+              <p className="text-lg font-semibold text-[var(--text-primary)]">{statement?.page_count}</p>
             </div>
           </div>
         </div>
 
         {/* Summary Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-6">
-          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
+          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Transactions</p>
-                <p className="text-3xl font-bold text-white">{transactions.length}</p>
+                <p className="text-3xl font-bold text-[var(--text-primary)]">{transactions.length}</p>
               </div>
               <FileText className="w-12 h-12 text-indigo-500 opacity-20" />
             </div>
           </div>
 
-          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
+          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Debits</p>
@@ -270,7 +279,7 @@ export default function StatementDetails() {
             </div>
           </div>
 
-          <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 shadow-xl">
+          <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-6 shadow-xl">
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-gray-500 text-sm mb-1">Total Credits</p>
@@ -282,7 +291,7 @@ export default function StatementDetails() {
         </div>
 
         {/* Filters */}
-        <div className="bg-white/[0.03] rounded-xl border border-white/5 p-6 mb-6">
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] p-6 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-gray-400 mb-2">
@@ -294,7 +303,7 @@ export default function StatementDetails() {
                 placeholder="Search transactions..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white placeholder-gray-500"
+                className="w-full px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-[var(--text-primary)] placeholder-gray-500"
               />
             </div>
 
@@ -306,7 +315,7 @@ export default function StatementDetails() {
               <select
                 value={filterCategory}
                 onChange={(e) => setFilterCategory(e.target.value)}
-                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white appearance-none"
+                className="w-full px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-[var(--text-primary)] appearance-none"
               >
                 <option value="all">All Categories</option>
                 {categories.map(cat => (
@@ -323,7 +332,7 @@ export default function StatementDetails() {
               <select
                 value={filterType}
                 onChange={(e) => setFilterType(e.target.value)}
-                className="w-full px-4 py-2 bg-white/[0.05] border border-white/10 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-white appearance-none"
+                className="w-full px-4 py-2 bg-[var(--bg-surface)] border border-[var(--border-subtle)] rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none text-[var(--text-primary)] appearance-none"
               >
                 <option value="all">All Types</option>
                 <option value="debit">Debits Only</option>
@@ -334,10 +343,10 @@ export default function StatementDetails() {
         </div>
 
         {/* Transactions Table */}
-        <div className="bg-white/[0.03] rounded-xl border border-white/5 overflow-hidden shadow-2xl">
+        <div className="bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] overflow-hidden shadow-2xl">
           <div className="overflow-x-auto">
             <table className="w-full">
-              <thead className="bg-white/[0.02] border-b border-white/5">
+              <thead className="bg-[var(--bg-surface)] border-b border-[var(--border-subtle)]">
                 <tr>
                   <th className="px-6 py-4 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                     Date
@@ -358,15 +367,15 @@ export default function StatementDetails() {
               </thead>
               <tbody className="divide-y divide-gray-200">
                 {filteredTransactions.map((transaction) => (
-                <tr key={transaction.id} className="hover:bg-white/[0.02] transition-colors border-b border-white/5">
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-300">
+                <tr key={transaction.id} className="hover:bg-[var(--bg-surface)] transition-colors border-b border-[var(--border-subtle)]">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-[var(--text-primary)]">
                     {formatDate(transaction.date)}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-300">
+                  <td className="px-6 py-4 text-sm text-[var(--text-primary)]">
                     <div className="max-w-md truncate">{transaction.description}</div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap">
-                    <span className={`px-3 py-1 rounded-full text-xs font-medium border bg-white/5 text-gray-300 border-white/10`}>
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium border bg-[var(--bg-surface)] text-[var(--text-secondary)] border-[var(--border-subtle)]`}>
                       {transaction.category}
                     </span>
                   </td>

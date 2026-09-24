@@ -129,6 +129,21 @@ uv sync
 uv run uvicorn app.main:app --reload --port 8080
 ```
 
+Post-processing jobs are durable in MongoDB. Local development consumes them
+inside the web process by default. For production, set
+`RUN_EMBEDDED_WORKER=false` on the web service and run this command in a
+separate worker service using the same environment:
+
+```powershell
+uv run python -m app.worker
+```
+
+The worker atomically claims jobs with expiring leases, retries failures with
+backoff, and handles shutdown without accepting another job. Multiple worker
+instances can therefore process different uploads safely. On Render, configure
+the worker's shutdown delay to cover the longest expected enrichment job (up to
+300 seconds is supported).
+
 From `frontend/` in a second terminal:
 
 ```powershell
@@ -140,7 +155,7 @@ The frontend normally runs at `http://localhost:5173` and the API at `http://loc
 
 ## Main API routes
 
-Authentication: `POST /signup`, `POST /login`, `POST /google`, `POST /refresh`, `GET /me`, `POST /logout`.
+Authentication: `POST /signup`, `POST /login`, `POST /refresh`, `GET /me`, `POST /logout`.
 
 Statements: `POST /process-statement/`, `POST /process-multiple-statements/`, `GET /statements/`, `GET /statement/{upload_id}`, `GET /background-status/{upload_id}`, `DELETE /statement/{upload_id}`, `GET /stream-logs/{upload_id}`.
 

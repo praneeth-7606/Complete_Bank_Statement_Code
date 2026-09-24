@@ -2,6 +2,7 @@ import { createContext, useState, useContext, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import axios from 'axios'
 import { API_BASE_URL } from '../services/api'
+import { clearAllChatNamespaces } from '../hooks/useChatSession'
 
 const AuthContext = createContext(null)
 // 60s: free-tier backend sleeps when idle and needs ~50s to cold-start.
@@ -9,6 +10,11 @@ const AuthContext = createContext(null)
 const AUTH_REQUEST_TIMEOUT_MS = 60000
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const authApi = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: AUTH_REQUEST_TIMEOUT_MS,
+  withCredentials: false,
+})
 
 export const useAuth = () => {
   const context = useContext(AuthContext)
@@ -24,15 +30,13 @@ export const AuthProvider = ({ children }) => {
   const [token, setToken] = useState(localStorage.getItem('access_token'))
   const navigate = useNavigate()
 
-  const API_URL = API_BASE_URL
-
-  // Set axios default configuration
+  // Keep auth defaults scoped to the auth client. Mutating the global axios
+  // client can unexpectedly attach credentials to unrelated requests.
   useEffect(() => {
-    axios.defaults.withCredentials = true  // Enable credentials for CORS
     if (token) {
-      axios.defaults.headers.common['Authorization'] = `Bearer ${token}`
+      authApi.defaults.headers.common['Authorization'] = `Bearer ${token}`
     } else {
-      delete axios.defaults.headers.common['Authorization']
+      delete authApi.defaults.headers.common['Authorization']
     }
   }, [token])
 
@@ -42,7 +46,7 @@ export const AuthProvider = ({ children }) => {
       const storedToken = localStorage.getItem('access_token')
       if (storedToken) {
         try {
-          const response = await axios.get(`${API_URL}/auth/me`, {
+          const response = await authApi.get('/auth/me', {
             headers: { Authorization: `Bearer ${storedToken}` },
             timeout: AUTH_REQUEST_TIMEOUT_MS
           })
@@ -70,11 +74,11 @@ export const AuthProvider = ({ children }) => {
 
   const signup = async (email, password, fullName) => {
     try {
-      const response = await axios.post(`${API_URL}/auth/signup`, {
+      const response = await authApi.post('/auth/signup', {
         email,
         password,
         full_name: fullName
-      }, { timeout: AUTH_REQUEST_TIMEOUT_MS })
+      })
       
       const { access_token, refresh_token, user: userData } = response.data
       
@@ -108,7 +112,7 @@ export const AuthProvider = ({ children }) => {
 
   const login = async (email, password) => {
     try {
-      const response = await postWithWakeRetry(`${API_URL}/auth/login`, {
+      const response = await authApi.post('/auth/login', {
         email,
         password
       })
@@ -131,13 +135,14 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
-      await axios.post(`${API_URL}/auth/logout`, null, { timeout: AUTH_REQUEST_TIMEOUT_MS })
+      await authApi.post('/auth/logout', null)
     } catch (error) {
       console.error('Logout error:', error)
     } finally {
       localStorage.removeItem('access_token')
       localStorage.removeItem('refresh_token')
       localStorage.removeItem('dashboardData')
+      clearAllChatNamespaces()
       setToken(null)
       setUser(null)
       navigate('/login')

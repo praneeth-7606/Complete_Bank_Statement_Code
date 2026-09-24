@@ -1,0 +1,14 @@
+[
+  {
+    "id": "synthetic-credit-debit",
+    "bank": "synthetic-not-a-real-bank",
+    "expected": [
+      {"date": "2026-01-01", "debit": "0.10", "credit": "0.00", "balance": "9.90", "category": "Food"},
+      {"date": "2026-01-02", "debit": "0.00", "credit": "10.00", "balance": "19.90", "category": "Income"}
+    ],
+    "actual": [
+      {"date": "2026-01-01", "debit": "0.10", "credit": "0.00", "balance": "9.90", "category": "Food"},
+      {"date": "2026-01-02", "debit": "0.00", "credit": "10.00", "balance": "19.90", "category": "Income"}
+    ]
+  }
+]

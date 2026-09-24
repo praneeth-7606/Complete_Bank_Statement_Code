@@ -20,6 +20,7 @@ const Statements = lazy(() => import('./pages/Statements'))
 const StatementDetails = lazy(() => import('./pages/StatementDetails'))
 const InvestmentChat = lazy(() => import('./pages/InvestmentChat'))
 const Observability = lazy(() => import('./pages/Observability'))
+const RAGObservability = lazy(() => import('./pages/RAGObservability'))
 
 function PageLoader() {
   return (
@@ -117,6 +118,11 @@ function App() {
               <Route path="/observability" element={
                 <ProtectedRoute>
                   <ModernLayout><Observability /></ModernLayout>
+                </ProtectedRoute>
+              } />
+              <Route path="/observability/rag" element={
+                <ProtectedRoute>
+                  <ModernLayout><RAGObservability /></ModernLayout>
                 </ProtectedRoute>
               } />
             </Routes>

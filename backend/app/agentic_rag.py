@@ -17,6 +17,7 @@ import datetime
 import json
 import logging
 import re
+import time
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple, Union
 from bson.decimal128 import Decimal128
@@ -32,7 +33,8 @@ from .config import settings
 from .llm_provider import build_chat_llm, build_llm, build_structured_llm
 from .vector_store_pinecone import PineconeVectorStore
 from .rag_logger import rag_logger
-from .observability import observe_external_llm
+from .observability import current_trace, observe_external_llm
+from .rag_evaluation import evaluate_rag_run
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +151,27 @@ def validate_answer(answer: str, context: FinancialContext) -> bool:
         magnitude = len(str(int(context.total_debit)))
         return True  # Let the agent handle correctness; flag only structural failures
     return True
+
+
+def _record_rag_stage(
+    name: str,
+    started: float,
+    *,
+    status: str = "success",
+    metadata: Optional[Dict[str, Any]] = None,
+    error_type: Optional[str] = None,
+) -> None:
+    """Persist aggregate-only RAG stage telemetry for the in-app dashboard."""
+    trace = current_trace()
+    if trace:
+        trace.add_event(
+            name,
+            kind="rag",
+            status=status,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            metadata=metadata,
+            error_type=error_type,
+        )
 
 # ============================================================
 # VALIDATION UTILITIES
@@ -507,6 +530,11 @@ class HybridRetrievalLayer:
         return keys
 
     async def retrieve(self, plan: QueryPlan, user_id: str) -> List[Dict]:
+        """Compatibility wrapper for callers that only need documents."""
+        documents, _ = await self.retrieve_with_report(plan, user_id)
+        return documents
+
+    async def retrieve_with_report(self, plan: QueryPlan, user_id: str) -> Tuple[List[Dict], Dict[str, Any]]:
         # Bug #17: Security guard against empty user_id
         if not user_id:
             logger.error("Security alert: Attempted retrieval with empty user_id")
@@ -568,7 +596,12 @@ class HybridRetrievalLayer:
             merged_count=len(merged),
             source_errors=source_errors
         )
-        return merged
+        return merged, {
+            "mongo_docs": mongo_count,
+            "vector_docs": vector_count,
+            "merged_docs": len(merged),
+            "source_errors": source_errors,
+        }
 
 # ============================================================
 # STEP 3: SMART RE-RANKER
@@ -588,9 +621,14 @@ class SmartReRanker:
         return min(overlap * 1.5, 4.0)
 
     def rerank(self, docs: List[Dict], query: str, plan: QueryPlan) -> List[Dict]:
+        """Compatibility wrapper for callers that only need documents."""
+        documents, _ = self.rerank_with_report(docs, query, plan)
+        return documents
+
+    def rerank_with_report(self, docs: List[Dict], query: str, plan: QueryPlan) -> Tuple[List[Dict], Dict[str, Any]]:
         if not docs:
             rag_logger.log_rerank(0, 0, skipped_reason="No documents to rerank")
-            return docs
+            return docs, {"input_docs": 0, "reranked_docs": 0, "top_score": None}
         query_words = set(re.sub(r"[^\w]", " ", query.lower()).split())
         scored = []
         for doc in docs:
@@ -608,7 +646,11 @@ class SmartReRanker:
             top_score=scored[0][0] if scored else 0.0,
             skipped_reason="List query — preserved all docs" if is_list else None
         )
-        return reranked
+        return reranked, {
+            "input_docs": len(docs),
+            "reranked_docs": len(reranked),
+            "top_score": scored[0][0] if scored else None,
+        }
 
 # ============================================================
 # STEP 4: CONTEXT BUILDER
@@ -730,6 +772,10 @@ class ResponseGenerator:
                 insights=final_json.get("insights", []),
                 transactions=final_json.get("transactions", [])
             )
+            final_json["_rag_response_meta"] = {
+                "json_parse_success": True,
+                "fallback_used": False,
+            }
             return final_json
         except Exception as e:
             rag_logger.log_error("RESPONSE_GENERATOR", e)
@@ -756,6 +802,10 @@ class ResponseGenerator:
                 insights=[],
                 transactions=context.top_transactions[:10]
             )
+            fallback["_rag_response_meta"] = {
+                "json_parse_success": False,
+                "fallback_used": True,
+            }
             return fallback
 
 # ============================================================
@@ -775,30 +825,111 @@ class AgenticRAGPipeline:
         # Structured Logging Pipeline
         rag_logger.new_request(user_id)
         rag_logger.log_pipeline_start(user_query, user_id)
-        
-        is_valid, err = validate_query(user_query)
-        rag_logger.log_validation(is_valid, err, len(user_query))
-        if not is_valid: return {"answer": err, "transactions": []}
-        
-        plan, patches = await self.planner.plan(user_query, chat_history)
-        rag_logger.log_plan(plan, safety_corrections=patches)
+        pipeline_started = time.perf_counter()
+        try:
+            is_valid, err = validate_query(user_query)
+            rag_logger.log_validation(is_valid, err, len(user_query))
+            _record_rag_stage(
+                "rag.query_validation", pipeline_started,
+                status="success" if is_valid else "failed",
+                metadata={"query_length": len(user_query), "has_chat_history": bool(chat_history)},
+            )
+            if not is_valid:
+                return {"answer": err, "transactions": []}
 
-        raw_docs = await self.retriever.retrieve(plan, user_id)
-        top_docs = self.reranker.rerank(raw_docs, user_query, plan)
-        context = self.context_builder.build(top_docs, plan)
-        
-        is_valid_ctx, ctx_err = validate_context(context, plan)
-        rag_logger.log_context_validation(is_valid_ctx, ctx_err)
-        if not is_valid_ctx: return {"answer": ctx_err, "transactions": []}
-        
-        final = await self.generator.generate(user_query, context, plan)
-        
-        rag_logger.log_pipeline_complete(
-            txn_count=context.transaction_count,
-            answer_length=len(final.get("answer", "")),
-            steps_completed=5
-        )
-        return final
+            stage_started = time.perf_counter()
+            plan, patches = await self.planner.plan(user_query, chat_history)
+            rag_logger.log_plan(plan, safety_corrections=patches)
+            _record_rag_stage(
+                "rag.planner", stage_started,
+                metadata={
+                    "query_type": plan.query_type,
+                    "needs_mongo": plan.needs_mongo,
+                    "needs_vector": plan.needs_vector,
+                    "needs_aggregation": plan.needs_aggregation,
+                    "limit": plan.limit,
+                    "safety_correction_count": len(patches),
+                },
+            )
+
+            stage_started = time.perf_counter()
+            raw_docs, retrieval_report = await self.retriever.retrieve_with_report(plan, user_id)
+            _record_rag_stage(
+                "rag.retrieval", stage_started,
+                status="failed" if retrieval_report["source_errors"] else "success",
+                metadata={
+                    "mongo_docs": retrieval_report["mongo_docs"],
+                    "vector_docs": retrieval_report["vector_docs"],
+                    "merged_docs": retrieval_report["merged_docs"],
+                    "source_error_count": len(retrieval_report["source_errors"]),
+                    "result_available": bool(raw_docs),
+                },
+                error_type="RetrievalError" if retrieval_report["source_errors"] else None,
+            )
+
+            stage_started = time.perf_counter()
+            top_docs, rerank_report = self.reranker.rerank_with_report(raw_docs, user_query, plan)
+            _record_rag_stage(
+                "rag.reranker", stage_started,
+                metadata={
+                    "raw_docs": rerank_report["input_docs"],
+                    "reranked_docs": rerank_report["reranked_docs"],
+                    "top_score": rerank_report["top_score"] or 0.0,
+                    "rerank_retained_ratio": round(
+                        rerank_report["reranked_docs"] / max(rerank_report["input_docs"], 1), 4
+                    ),
+                },
+            )
+
+            stage_started = time.perf_counter()
+            context = self.context_builder.build(top_docs, plan)
+            _record_rag_stage(
+                "rag.context", stage_started,
+                metadata={
+                    "context_transaction_count": context.transaction_count,
+                    "context_total_debit": context.total_debit,
+                    "context_total_credit": context.total_credit,
+                },
+            )
+
+            is_valid_ctx, ctx_err = validate_context(context, plan)
+            rag_logger.log_context_validation(is_valid_ctx, ctx_err)
+            if not is_valid_ctx:
+                evaluate_rag_run(
+                    plan=plan, raw_documents=raw_docs, reranked_documents=top_docs,
+                    context=context, response=None,
+                    source_errors=retrieval_report["source_errors"],
+                )
+                return {"answer": ctx_err, "transactions": []}
+
+            stage_started = time.perf_counter()
+            final = await self.generator.generate(user_query, context, plan)
+            response_meta = final.pop("_rag_response_meta", {})
+            _record_rag_stage(
+                "rag.response", stage_started,
+                metadata={
+                    "answer_length": len(final.get("answer", "")),
+                    "response_json_valid": bool(response_meta.get("json_parse_success")),
+                    "response_fallback": bool(response_meta.get("fallback_used")),
+                },
+            )
+            evaluate_rag_run(
+                plan=plan, raw_documents=raw_docs, reranked_documents=top_docs,
+                context=context, response=final,
+                source_errors=retrieval_report["source_errors"], response_meta=response_meta,
+            )
+
+            rag_logger.log_pipeline_complete(
+                txn_count=context.transaction_count,
+                answer_length=len(final.get("answer", "")),
+                steps_completed=5
+            )
+            return final
+        except Exception as exc:
+            _record_rag_stage(
+                "rag.pipeline", pipeline_started, status="failed", error_type=type(exc).__name__,
+            )
+            raise
 
     async def generate_embedding(self, text: str) -> List[float]:
         import google.generativeai as genai

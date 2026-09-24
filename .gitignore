@@ -144,3 +144,12 @@ frontend/dist/
 *.pyc
 .venv/
 venv/
+backend/.venv-ab/
+backend/.test-tmp/
+backend/reports/extraction_validation/
+tmp/pdfs/
+backend/.uv-cache*/
+backend/.venv2/
+backend/.pytest-tmp*/
+.uv-cache/
+backend/evaluation-private/

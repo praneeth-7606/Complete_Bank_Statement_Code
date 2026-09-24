@@ -26,7 +26,8 @@ from .data_encryptor import DataEncryptor, EncryptionError
 from .config import settings
 from .investment.router import router as investment_router
 from .observability_router import router as observability_router
-from .observability import bind_trace, current_trace, new_trace, reset_trace, set_trace_user
+from .observability import bind_trace, current_trace, new_trace, reset_trace, set_trace_user, flush_pending
+from .telemetry import configure_telemetry, shutdown_telemetry, current_id, span as telemetry_span, record_counter
 
 # Initialize Logging for Terminal Visibility
 setup_logging()
@@ -95,6 +96,7 @@ async def _owned_upload(upload_id: str, current_user: models.User) -> models.Upl
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    configure_telemetry(settings)
     await init_db()
     # Recovery pass: in-process background tasks do not survive restarts, so
     # any job still queued/running at boot died mid-flight. Mark it honestly
@@ -127,7 +129,20 @@ async def lifespan(app: FastAPI):
             )
     except Exception:
         pass
-    yield
+    worker_stop = asyncio.Event()
+    worker_task = None
+    if settings.RUN_EMBEDDED_WORKER:
+        from .post_processing import worker_loop
+
+        worker_task = asyncio.create_task(worker_loop(worker_stop, worker_id="embedded-web-worker"))
+    try:
+        yield
+    finally:
+        if worker_task:
+            worker_stop.set()
+            await worker_task
+        await flush_pending()
+        await asyncio.to_thread(shutdown_telemetry)
 
 app = FastAPI(
     title="Agentic Financial System with MongoDB",
@@ -140,14 +155,28 @@ app = FastAPI(
 @app.middleware("http")
 async def observability_middleware(request: Request, call_next):
     """Create one durable trace for every HTTP request without blocking the app."""
-    request_id = request.headers.get("X-Request-ID") or str(uuid.uuid4())
-    trace = new_trace(request.url.path, request_id=request_id)
+    # Do not record authentication bodies, arbitrary URLs or dashboard polling.
+    if request.url.path.startswith(("/observability", "/auth")):
+        return await call_next(request)
+    request_id = str(uuid.uuid4())
+    trace = new_trace("http.request", request_id=request_id)
     request.state.trace_id = trace.trace_id
     request.state.request_id = request_id
     token = bind_trace(trace)
     started = time.perf_counter()
+    context = telemetry_span("http.request", {"http.request.method": request.method}, parent={})
+    active = context.__enter__()
+    trace.otel_trace_id = current_id()
     try:
         response = await call_next(request)
+        route = request.scope.get("route")
+        trace.route = getattr(route, "path", "unmatched")
+        if active:
+            active.set_attribute("http.route", trace.route)
+            active.set_attribute("http.response.status_code", response.status_code)
+            if response.status_code >= 400:
+                from opentelemetry.trace import Status, StatusCode
+                active.set_status(Status(StatusCode.ERROR))
         status = "success" if response.status_code < 400 else "failed"
         trace.add_event(
             "http_request",
@@ -157,6 +186,7 @@ async def observability_middleware(request: Request, call_next):
             metadata={"method": request.method, "status_code": response.status_code},
         )
         trace.finish(status)
+        record_counter("app.http.requests", attributes={"route": trace.route, "status": status})
         # Persistence is scheduled in the running event loop so telemetry does
         # not add a MongoDB round-trip to the user-facing response path.
         trace.schedule_persist()
@@ -173,9 +203,14 @@ async def observability_middleware(request: Request, call_next):
             error_type=type(exc).__name__,
         )
         trace.finish("failed")
+        if active:
+            from opentelemetry.trace import Status, StatusCode
+            active.set_status(Status(StatusCode.ERROR))
+        record_counter("app.http.requests", attributes={"route": "unhandled", "status": "failed"})
         trace.schedule_persist()
         raise
     finally:
+        context.__exit__(None, None, None)
         reset_trace(token)
 
 # Add CORS middleware to allow frontend access
@@ -312,6 +347,16 @@ async def process_single_statement_core(
         )
         
         if not result.get("transactions"):
+             if streaming_id:
+                 # progress=None: intermediate failure. Single endpoint (or multi
+                 # summary) emits the terminal error@100 so a failed child in a
+                 # batch cannot kill the parent SSE stream early.
+                 await log_streamer.add_log(
+                     streaming_id,
+                     f"[FAIL] {pdf_file.filename}: {result.get('errors', ['No transactions extracted'])[0]}",
+                     "error",
+                     None,
+                 )
              return {
                 "success": False,
                 "filename": pdf_file.filename,
@@ -339,6 +384,22 @@ async def process_single_statement_core(
         }
         
     except Exception as e:
+        from .extraction_validation import ExtractionNeedsReview
+        if isinstance(e, ExtractionNeedsReview):
+            if streaming_id and user_id:
+                review_upload = await models.Upload.find_one(
+                    models.Upload.upload_id == streaming_id,
+                    models.Upload.user_id == user_id,
+                )
+                if review_upload is None:
+                    review_upload = models.Upload(upload_id=streaming_id, user_id=user_id,
+                        filename=pdf_file.filename or "statement.pdf")
+                review_upload.status = "needs_review"
+                review_upload.extraction_review = e.report
+                review_upload.error_message = str(e)
+                await review_upload.save()
+            return {"success": False, "status": "needs_review", "upload_id": streaming_id,
+                    "filename": pdf_file.filename, "error": str(e), "validation_report": e.report}
         if trace:
             trace.add_event(
                 "statement_pipeline",
@@ -349,6 +410,13 @@ async def process_single_statement_core(
                 error_type=type(e).__name__,
             )
         logger.error(f"Error processing {pdf_file.filename}: {str(e)}")
+        if streaming_id:
+            await log_streamer.add_log(
+                streaming_id,
+                f"[FAIL] {pdf_file.filename}: {e}",
+                "error",
+                None,
+            )
         return {
             "success": False,
             "filename": pdf_file.filename,
@@ -356,6 +424,8 @@ async def process_single_statement_core(
         }
         
     except HTTPException as he:
+        if streaming_id:
+            await log_streamer.add_log(streaming_id, f"[FAIL] {pdf_file.filename}: {he.detail}", "error", None)
         return {
             "success": False,
             "filename": pdf_file.filename,
@@ -366,6 +436,8 @@ async def process_single_statement_core(
         }
     except Exception as e:
         logger.error(f"Error processing {pdf_file.filename}: {str(e)}")
+        if streaming_id:
+            await log_streamer.add_log(streaming_id, f"[FAIL] {pdf_file.filename}: {e}", "error", None)
         return {
             "success": False,
             "filename": pdf_file.filename,
@@ -447,6 +519,11 @@ async def process_multiple_statements(
             10 + (i * 10)
         )
     
+    # Create child streams so per-file logs fan into the parent queue the
+    # browser is subscribed to (see LogStreamer.create_child_stream).
+    for i in range(statement_count):
+        log_streamer.create_child_stream(f"{streaming_id}_{i}", streaming_id)
+
     tasks = [
         process_single_statement_core(
             pdf_file,
@@ -469,26 +546,41 @@ async def process_multiple_statements(
     processed_count = 0
     failed_count = 0
     
-    for result in results:
+    for idx, result in enumerate(results):
         if isinstance(result, Exception) or not result.get("success"):
             failed_count += 1
             error_msg = str(result) if isinstance(result, Exception) else result.get("error", "Unknown")
+            filename = result.get("filename", "unknown") if isinstance(result, dict) else "unknown"
+            await log_streamer.add_log(
+                streaming_id,
+                f"[FAIL] {filename}: {error_msg}",
+                "error",
+                None,
+            )
             statement_results.append({
-                "filename": result.get("filename", "unknown") if isinstance(result, dict) else "unknown",
-                "status": "failed",
+                "filename": filename,
+                "status": result.get("status", "failed") if isinstance(result, dict) else "failed",
+                "upload_id": result.get("upload_id", "") if isinstance(result, dict) else "",
+                "validation_report": result.get("validation_report") if isinstance(result, dict) else None,
                 "error": error_msg
             })
             continue
         
         processed_count += 1
         all_transactions.extend(result["transactions"])
+        await log_streamer.add_log(
+            streaming_id,
+            f"[OK] {result['filename']}: {len(result['transactions'])} transactions extracted.",
+            "success",
+            None,
+        )
         statement_results.append({
             "filename": result["filename"],
             "upload_id": result["upload_id"],
             "transaction_count": len(result["transactions"]),
             "transactions": result["transactions"],
             "insights": result["insights"],
-            "status": "success"
+            "status": "processing"
         })
     
     # ============================================
@@ -497,23 +589,40 @@ async def process_multiple_statements(
     logger.info(f"[FAST] Returning response immediately. Background tasks running...")
     
     summary_msg = f"Processed {processed_count} successfully, {failed_count} failed."
+    await log_streamer.add_log(streaming_id, f"[SUMMARY] {summary_msg}", "info", 95)
+    if failed_count == statement_count:
+        await log_streamer.add_log(
+            streaming_id,
+            "[FAIL] All statements failed. See errors above.",
+            "error",
+            100,
+        )
+    else:
+        await log_streamer.add_log(
+            streaming_id,
+            "[COMPLETE] Batch processing finished. Enrichment continues in background.",
+            "complete",
+            100,
+        )
     
     # Return comprehensive JSON response with transactions (from memory, not DB)
     return {
-        "status": "success" if processed_count > 0 else "failed",
+        "status": "processing" if processed_count > 0 else "failed",
         "total_statements": statement_count,
         "processed_successfully": processed_count,
         "failed_statements": failed_count,
         "total_transactions": len(all_transactions),
         "message": summary_msg,
         "transactions": all_transactions,
-        "background_tasks_running": True,
+        "background_tasks_running": processed_count > 0,
         "statement_details": [
             {
                 "filename": stmt["filename"],
                 "upload_id": stmt.get("upload_id", ""),
                 "transaction_count": stmt.get("transaction_count", 0),
-                "status": stmt["status"]
+                "status": stmt["status"],
+                "validation_report": stmt.get("validation_report"),
+                "error": stmt.get("error")
             }
             for stmt in statement_results
         ]
@@ -584,7 +693,7 @@ async def process_statement(
         # indexing run in the background, so checking only the existing
         # completed uploads leaves a race where two identical requests both
         # enter processing and create duplicate transactions.
-        reserved_upload = models.Upload(
+        reserved_upload = await models.Upload(
             upload_id=streaming_id,
             file_hash=file_hash,
             filename=statement_pdf.filename or "statement.pdf",
@@ -611,6 +720,16 @@ async def process_statement(
         )
         
         if not result.get("success"):
+            if result.get("status") == "needs_review":
+                await log_streamer.add_log(streaming_id, result["error"], "error", 100)
+                if reserved_upload:
+                    reserved_upload.status = "failed"
+                    reserved_upload.error_message = result["error"]
+                    await reserved_upload.save()
+                return {"status": "needs_review", "upload_id": streaming_id,
+                        "message": result["error"], "transactions": [],
+                        "validation_report": result["validation_report"],
+                        "background_tasks_running": False}
             # Surface the real error text (extraction stage, quota, parse) so
             # the UI, users, and agents can diagnose instead of guessing.
             err_text = str(result.get("error", "Statement processing failed"))
@@ -622,7 +741,7 @@ async def process_statement(
             return {
                 "status": "failed",
                 "upload_id": streaming_id,
-                "message": "Statement processing failed",
+                "message": err_text,
                 "error": err_text,
                 "transactions": [],
                 "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
@@ -633,21 +752,35 @@ async def process_statement(
         
         await log_streamer.add_log(
             streaming_id,
-            f"[OK] Success! {len(result['transactions'])} transactions processed in {processing_time:.1f}s",
+            f"[OK] {len(result['transactions'])} transactions extracted and saved in {processing_time:.1f}s",
             "success",
+            90
+        )
+        await log_streamer.add_log(
+            streaming_id,
+            "[COMPLETE] Statement processed. Enrichment continues in background.",
+            "complete",
             100
         )
 
         return {
-            "status": "success",
+            "status": "processing",
             "upload_id": streaming_id,
             "total_transactions": len(result["transactions"]),
-            "message": f"Successfully processed {len(result['transactions'])} transactions.",
+            "message": f"Extracted and saved {len(result['transactions'])} transactions. Enrichment is running.",
             "transactions": result["transactions"],
             "analysis": result["insights"],
+            "background_tasks_running": True,
+            "statement_details": [{
+                "filename": statement_pdf.filename or "statement.pdf",
+                "upload_id": streaming_id,
+                "transaction_count": len(result["transactions"]),
+                "status": "processing",
+            }],
             "metadata": {
                 "processing_time_seconds": round(processing_time, 2),
-                "analysis_status": "complete"
+                "persistence_status": "completed",
+                "analysis_status": "queued"
             }
         }
         
@@ -657,11 +790,11 @@ async def process_statement(
             reserved_upload.status = "failed"
             reserved_upload.error_message = str(e)
             await reserved_upload.save()
-        await log_streamer.add_log(streaming_id, f"[FAIL] System Error: {str(e)}", "error", 0)
+        await log_streamer.add_log(streaming_id, f"[FAIL] System Error: {str(e)}", "error", 100)
         return {
             "status": "failed",
             "upload_id": streaming_id,
-            "message": "Statement processing failed",
+            "message": str(e) or "Statement processing failed",
             "transactions": [],
             "analysis": {"summary": {}, "category_wise_split": {}, "insights": []}
         }
@@ -704,19 +837,12 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
             chat_history=history
         )
         if current_trace():
-            plan = result.get("plan")
             current_trace().add_event(
                 "rag_pipeline",
                 kind="rag",
                 metadata={
-                    "plan": {
-                        "query_type": getattr(plan, "query_type", None),
-                        "needs_mongo": getattr(plan, "needs_mongo", None),
-                        "needs_vector": getattr(plan, "needs_vector", None),
-                        "needs_aggregation": getattr(plan, "needs_aggregation", None),
-                        "limit": getattr(plan, "limit", None),
-                    },
                     "transaction_count": len(result.get("transactions", [])),
+                    "query_length": len(query.query),
                 },
                 duration_ms=(time.time() - start_time) * 1000,
             )
@@ -872,6 +998,20 @@ async def get_all_statements(current_user: models.User = Depends(auth_utils.get_
             "statements": []
         }
 
+@app.get("/_debug/my-uploads")
+async def _debug_my_uploads(
+    current_user: models.User = Depends(auth_utils.get_current_user),
+):
+    uploads = await models.Upload.find(
+        models.Upload.user_id == current_user.user_id
+    ).to_list()
+    return {
+        "user_id": str(current_user.user_id),
+        "n": len(uploads),
+        "ids": [(u.upload_id, str(u.id)) for u in uploads],
+    }
+
+
 @app.get("/statement/{upload_id}")
 async def get_statement_details(
     upload_id: str,
@@ -947,7 +1087,8 @@ async def get_statement_details(
                 "uploaded_at": upload.timestamp.isoformat(),
                 "processed_at": upload.processed_at.isoformat() if upload.processed_at else None
             },
-            "transactions": transactions_json
+            "transactions": transactions_json,
+            "validation_report": upload.extraction_review
         }
     except HTTPException:
         raise
@@ -984,9 +1125,11 @@ async def get_background_status(
                     "upload_id": upload_id,
                     "db_save_completed": False,
                     "vector_index_completed": False,
+                    "insights_completed": False,
                     "status": job.status,
                     "stage": job.stage,
-                    "all_tasks_completed": job.status == "completed",
+                    "error": job.error_message,
+                    "all_tasks_completed": False,
                 }
         upload = upload or await _owned_upload(upload_id, current_user)
         
@@ -994,8 +1137,15 @@ async def get_background_status(
             "upload_id": upload.upload_id or str(upload.id),
             "db_save_completed": upload.db_save_completed,
             "vector_index_completed": upload.vector_index_completed,
+            "insights_completed": upload.insights_completed,
             "status": upload.status,
-            "all_tasks_completed": upload.db_save_completed and upload.vector_index_completed
+            "error": upload.enrichment_error,
+            "all_tasks_completed": (
+                upload.status == "completed"
+                and upload.db_save_completed
+                and upload.vector_index_completed
+                and upload.insights_completed
+            ),
         }
     except HTTPException:
         raise
@@ -1402,57 +1552,80 @@ async def update_transaction_category(
                 detail=f"Invalid category. Allowed categories: {', '.join(allowed_categories)}"
             )
         
-        # Get transaction from MongoDB
-        transaction = await models.Transaction.get(transaction_id)
+        # Resolve transaction: accept Mongo ObjectId or public UUID transaction_id.
+        transaction = None
+        try:
+            from bson import ObjectId as _ObjectId
+            if _ObjectId.is_valid(transaction_id):
+                transaction = await models.Transaction.get(transaction_id)
+        except Exception:
+            transaction = None
+        if not transaction:
+            transaction = await models.Transaction.find_one(
+                models.Transaction.transaction_id == transaction_id
+            )
         if not transaction:
             raise HTTPException(status_code=404, detail="Transaction not found")
-        
-        # Verify user owns this transaction (via upload_id)
-        upload = await models.Upload.get(transaction.upload_id)
-        if not upload or upload.user_id != current_user.user_id:
+
+        # Verify user owns this transaction (via upload_id).
+        # upload_id is a UUID, so query the field instead of Document.get().
+        upload = await models.Upload.find_one(
+            models.Upload.upload_id == transaction.upload_id
+        )
+        if not upload:
+            try:
+                upload = await models.Upload.find_one(
+                    models.Upload.id == transaction.upload_id
+                )
+            except Exception:
+                upload = None
+        if not upload or str(upload.user_id) != str(current_user.user_id):
             raise HTTPException(status_code=403, detail="Access denied to this transaction")
-        
+
         # Store old category for logging
         old_category = transaction.category
-        
+
         # Update transaction in MongoDB
         transaction.category = new_category
         await transaction.save()
-        
-        logger.info(f"[OK] Updated transaction {transaction_id} category from {old_category} to {new_category}")
-        
-        # Update vector embedding in Pinecone
+
+        logger.info(f"[OK] Updated transaction {transaction.transaction_id} category from {old_category} to {new_category}")
+
+        # Update vector embedding in Pinecone (vectors are keyed by transaction_id UUID)
+        vector_id = transaction.transaction_id
         try:
-            # Regenerate embedding with new category
             transaction_text = f"{transaction.date} {transaction.description} {new_category} {transaction.amount}"
-            
-            # Delete old vector
-            await rag_pipeline.delete_transaction_vector(transaction_id)
-            
-            # Create new vector with updated category
+
+            await rag_pipeline.delete_transaction_vector(vector_id)
+
             embedding = await rag_pipeline.generate_embedding(transaction_text)
             await rag_pipeline.upsert_transaction_vector(
-                transaction_id=transaction_id,
-                embedding=embedding,
-                metadata={
+                tid=vector_id,
+                emb=embedding,
+                meta={
                     'date': transaction.date.isoformat(),
                     'description': transaction.description,
                     'category': new_category,
                     'amount': float(transaction.amount),
-                    'upload_id': transaction.upload_id
+                    'debit': float(transaction.debit),
+                    'credit': float(transaction.credit),
+                    'upload_id': transaction.upload_id,
+                    'transaction_id': vector_id,
+                    'user_id': str(transaction.user_id or ''),
                 }
             )
-            
-            logger.info(f"[OK] Updated Pinecone vector for transaction {transaction_id}")
+
+            logger.info(f"[OK] Updated Pinecone vector for transaction {vector_id}")
         except Exception as e:
             logger.error(f"[WARN]  Failed to update Pinecone vector: {e}")
             # Continue even if Pinecone update fails
-        
+
         # Return updated transaction
         return {
             "status": "success",
             "data": {
-                "transaction_id": str(transaction.id),
+                "id": str(transaction.id),
+                "transaction_id": str(transaction.transaction_id),
                 "old_category": old_category,
                 "new_category": new_category,
                 "date": transaction.date.isoformat(),

@@ -106,12 +106,12 @@ const InsightCard = memo(({ insight, index }) => {
       initial={{ opacity: 0, x: -16 }}
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.08, duration: 0.4 }}
-      className={`flex items-start gap-3 p-4 rounded-xl border ${isPositive ? 'bg-emerald-50 border-emerald-200' : 'bg-primary-50 border-primary-200'}`}
+      className={`flex items-start gap-3 p-4 rounded-xl border ${isPositive ? 'bg-emerald-50 border-emerald-200 dark:bg-emerald-900/40 dark:border-emerald-800/60' : 'bg-primary-50 border-primary-200 dark:bg-primary-900/40 dark:border-primary-800/60'}`}
     >
-      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isPositive ? 'bg-emerald-100' : 'bg-primary-100'}`}>
-        {isPositive ? <TrendingUp className="w-4 h-4 text-emerald-600" /> : <Brain className="w-4 h-4 text-primary-600" />}
+      <div className={`w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 mt-0.5 ${isPositive ? 'bg-emerald-100 dark:bg-emerald-800/60' : 'bg-primary-100 dark:bg-primary-800/60'}`}>
+        {isPositive ? <TrendingUp className="w-4 h-4 text-emerald-600 dark:text-emerald-300" /> : <Brain className="w-4 h-4 text-primary-600 dark:text-primary-300" />}
       </div>
-      <p className="text-sm text-neutral-700 leading-relaxed font-medium">{insight.replace('✅ ', '').replace('⚠️ ', '')}</p>
+      <p className="text-sm text-neutral-700 dark:text-slate-200 leading-relaxed font-medium">{insight.replace('✅ ', '').replace('⚠️ ', '')}</p>
     </motion.div>
   )
 })
@@ -360,13 +360,13 @@ const Analytics = () => {
       {/* ── STAT CARDS ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard title="Net Balance" value={analyticsData.summary.balance || 0} icon={Zap}
-          gradient="linear-gradient(135deg,#6366f1,#8b5cf6)" textColor="text-indigo-300" decimals={2} delay={0} trend="+12%" trendUp />
+          gradient="linear-gradient(135deg,#6366f1,#8b5cf6)" textColor="text-indigo-600 dark:text-indigo-300" decimals={2} delay={0} />
         <StatCard title="Total Income" value={analyticsData.summary.totalIncome || 0} icon={TrendingUp}
-          gradient="linear-gradient(135deg,#10b981,#059669)" textColor="text-emerald-300" decimals={2} delay={0.07} trend="+8%" trendUp />
+          gradient="linear-gradient(135deg,#10b981,#059669)" textColor="text-emerald-600 dark:text-emerald-300" decimals={2} delay={0.07} />
         <StatCard title="Total Expenses" value={analyticsData.summary.totalExpenses || 0} icon={TrendingDown}
-          gradient="linear-gradient(135deg,#ef4444,#dc2626)" textColor="text-rose-300" decimals={2} delay={0.14} trend="-3%" trendUp={false} />
+          gradient="linear-gradient(135deg,#ef4444,#dc2626)" textColor="text-rose-600 dark:text-rose-300" decimals={2} delay={0.14} />
         <StatCard title="Transactions" value={analyticsData.summary.totalTransactions || 0} icon={Activity}
-          gradient="linear-gradient(135deg,#f59e0b,#d97706)" textColor="text-amber-300" prefix="" delay={0.21} trend="+15" trendUp />
+          gradient="linear-gradient(135deg,#f59e0b,#d97706)" textColor="text-amber-600 dark:text-amber-300" prefix="" delay={0.21} />
       </div>
 
       {/* ── CHARTS GRID ── */}

@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Upload as UploadIcon, X, FileText, Lock, Loader2, Bell, BellOff, CheckCircle, AlertCircle, Zap, Database } from 'lucide-react'
 import { motion, AnimatePresence } from 'framer-motion'
 import toast from 'react-hot-toast'
@@ -6,6 +6,7 @@ import { statementAPI, statementsAPI } from '../services/api'
 import LogViewer from '../components/LogViewer'
 import EnhancedResultsCard from '../components/upload/EnhancedResultsCard'
 import notificationManager from '../utils/notifications'
+import { validateFiles } from '../utils/validators'
 import { Button, Badge, Card, Skeleton } from '../components/ui'
 
 const Upload = () => {
@@ -13,10 +14,13 @@ const Upload = () => {
   const [passwords, setPasswords] = useState({})
   const [processing, setProcessing] = useState(false)
   const [results, setResults] = useState(null)
+  const [reviewResult, setReviewResult] = useState(null)
   const [uploadId, setUploadId] = useState(null)
   const [showLogs, setShowLogs] = useState(false)
   const [notificationsEnabled, setNotificationsEnabled] = useState(false)
   const [dragActive, setDragActive] = useState(false)
+  const [fatalError, setFatalError] = useState(null)
+  const pollIntervalRef = useRef(null)
 
   // Check notification permission on mount
   useEffect(() => {
@@ -41,24 +45,32 @@ const Upload = () => {
     }
   }
 
-  const handleFileChange = (e) => {
-    const selectedFiles = Array.from(e.target.files)
-    const pdfFiles = selectedFiles.filter(file => file.type === 'application/pdf')
-
-    if (pdfFiles.length !== selectedFiles.length) {
-      toast.error('Only PDF files are allowed')
+  const addFiles = (incomingFiles) => {
+    const duplicateNames = incomingFiles.filter(file => files.some(existing => existing.name === file.name))
+    if (duplicateNames.length > 0) {
+      toast.error('Each uploaded file must have a unique filename')
+      return
     }
 
-    setFiles(prev => [...prev, ...pdfFiles])
+    const nextFiles = [...files, ...incomingFiles]
+    const validation = validateFiles(nextFiles)
+    if (!validation.isValid) {
+      const detail = validation.invalidFiles?.[0]?.error || validation.error
+      toast.error(detail)
+      return
+    }
 
-    // Initialize passwords for new files
-    const newPasswords = { ...passwords }
-    pdfFiles.forEach(file => {
-      if (!newPasswords[file.name]) {
-        newPasswords[file.name] = ''
-      }
+    setFiles(nextFiles)
+    setPasswords(previous => {
+      const next = { ...previous }
+      incomingFiles.forEach(file => { if (!(file.name in next)) next[file.name] = '' })
+      return next
     })
-    setPasswords(newPasswords)
+  }
+
+  const handleFileChange = (e) => {
+    addFiles(Array.from(e.target.files || []))
+    e.target.value = ''
   }
 
   const handleDrag = (e) => {
@@ -76,23 +88,7 @@ const Upload = () => {
     e.stopPropagation()
     setDragActive(false)
 
-    const droppedFiles = Array.from(e.dataTransfer.files)
-    const pdfFiles = droppedFiles.filter(file => file.type === 'application/pdf')
-
-    if (pdfFiles.length !== droppedFiles.length) {
-      toast.error('Only PDF files are allowed')
-    }
-
-    setFiles(prev => [...prev, ...pdfFiles])
-
-    // Initialize passwords for new files
-    const newPasswords = { ...passwords }
-    pdfFiles.forEach(file => {
-      if (!newPasswords[file.name]) {
-        newPasswords[file.name] = ''
-      }
-    })
-    setPasswords(newPasswords)
+    addFiles(Array.from(e.dataTransfer.files || []))
   }
 
   const removeFile = (fileName) => {
@@ -126,6 +122,8 @@ const Upload = () => {
 
     setProcessing(true)
     setResults(null)
+    setReviewResult(null)
+    setFatalError(null)
 
     try {
       let response
@@ -181,7 +179,12 @@ const Upload = () => {
         response = await statementAPI.processMultipleStatements(files, passwordArray, generatedUploadId)
 
         toast.dismiss('multi-upload')
-        toast.success(`✅ Successfully processed ${files.length} statements!`)
+        if (response.processed_successfully > 0) {
+          toast.success(`Extracted and saved ${response.processed_successfully} statements. Enrichment is running.`)
+        }
+        if (response.failed_statements > 0) {
+          toast.error(`${response.failed_statements} statements failed or need review. Check their results.`)
+        }
 
         // Show success notification
         if (notificationsEnabled && response.status === 'success') {
@@ -192,6 +195,26 @@ const Upload = () => {
         }
       }
 
+      if (response.status === 'needs_review' || response.status === 'failed') {
+        toast.error(response.message || 'Statement needs review; transactions were not published.', { duration: 10000 })
+        setProcessing(false)
+        setShowLogs(false)
+        setResults(null)
+        setFatalError(response.message || 'Statement needs review; transactions were not published.')
+        setReviewResult(response)
+        return
+      }
+
+      // Total multi-file failure: surface error, don't poll background tasks
+      if (files.length > 1 && response.processed_successfully === 0 && response.failed_statements > 0) {
+        const firstError = response.statement_details?.find(s => s.error)?.error || 'All statements failed to process'
+        setFatalError(firstError)
+        setProcessing(false)
+        setShowLogs(false)
+        setResults(null)
+        setReviewResult(response)
+        return
+      }
       setResults(response)
 
       // Extract transactions from response
@@ -202,92 +225,6 @@ const Upload = () => {
       } else {
         // Multiple files response - backend returns "transactions" not "all_transactions"
         allTransactions = response.transactions || []
-      }
-
-      // Calculate stats
-      const totalIncome = allTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
-      const totalExpenses = allTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
-      const balance = totalIncome - totalExpenses
-
-      // Fetch fresh data from backend to ensure persistence
-      try {
-        const response = await statementsAPI.getAllStatements()
-        const statements = response.statements || []
-        let backendTransactions = []
-
-        for (const statement of statements) {
-          const details = await statementsAPI.getStatementDetails(statement.upload_id)
-          if (details.transactions) {
-            backendTransactions = [...backendTransactions, ...details.transactions]
-          }
-        }
-
-        // Calculate stats from backend data
-        const backendIncome = backendTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
-        const backendExpenses = backendTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
-        const backendBalance = backendIncome - backendExpenses
-
-        // Save backend data to localStorage as cache
-        const dashboardData = {
-          stats: {
-            totalTransactions: backendTransactions.length,
-            totalIncome: backendIncome,
-            totalExpenses: backendExpenses,
-            balance: backendBalance,
-          },
-          allTransactions: backendTransactions.map(t => ({
-            description: t.description || 'N/A',
-            date: t.date || 'N/A',
-            amount: parseFloat(t.credit || t.debit || 0),
-            credit: parseFloat(t.credit || 0),
-            debit: parseFloat(t.debit || 0),
-            type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
-            category: t.category || 'Uncategorized',
-            balance: parseFloat(t.balance || 0)
-          })),
-          recentTransactions: backendTransactions.slice(0, 10).map(t => ({
-            description: t.description || 'N/A',
-            date: t.date || 'N/A',
-            amount: parseFloat(t.credit || t.debit || 0),
-            type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
-            category: t.category || 'Uncategorized'
-          }))
-        }
-        localStorage.setItem('dashboardData', JSON.stringify(dashboardData))
-
-        console.log('✅ Saved backend data to localStorage:', {
-          totalTransactions: backendTransactions.length,
-          sampleTransaction: backendTransactions[0]
-        })
-      } catch (error) {
-        console.error('Error fetching backend data:', error)
-        // Fallback: save current upload data
-        const dashboardData = {
-          stats: {
-            totalTransactions: allTransactions.length,
-            totalIncome: totalIncome,
-            totalExpenses: totalExpenses,
-            balance: balance,
-          },
-          allTransactions: allTransactions.map(t => ({
-            description: t.description || 'N/A',
-            date: t.date || 'N/A',
-            amount: parseFloat(t.credit || t.debit || 0),
-            credit: parseFloat(t.credit || 0),
-            debit: parseFloat(t.debit || 0),
-            type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
-            category: t.category || 'Uncategorized',
-            balance: parseFloat(t.balance || 0)
-          })),
-          recentTransactions: allTransactions.slice(0, 10).map(t => ({
-            description: t.description || 'N/A',
-            date: t.date || 'N/A',
-            amount: parseFloat(t.credit || t.debit || 0),
-            type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
-            category: t.category || 'Uncategorized'
-          }))
-        }
-        localStorage.setItem('dashboardData', JSON.stringify(dashboardData))
       }
 
       // Start polling for background task completion
@@ -309,7 +246,9 @@ const Upload = () => {
     } catch (error) {
       console.error('Upload error:', error)
       toast.dismiss('multi-upload') // Dismiss loading toast if it exists
-      toast.error(error.response?.data?.detail || 'Failed to process statement(s)')
+      const message = error.response?.data?.detail || error.message || 'Failed to process statement(s)'
+      toast.error(message)
+      setFatalError(message)
       setShowLogs(false)
       setProcessing(false) // Always reset processing state on error
     } finally {
@@ -326,8 +265,14 @@ const Upload = () => {
     setProcessing(false)
     setShowLogs(false)
     if (results) {
-      toast.success(`Successfully processed ${results.total_transactions} transactions!`)
+      toast.success(`Successfully processed ${results.total_transactions || results.transactions?.length || 0} transactions!`)
     }
+  }
+
+  const handleLogError = (message) => {
+    setFatalError(message || 'Statement processing failed')
+    setProcessing(false)
+    setShowLogs(false)
   }
 
   const handleReset = () => {
@@ -337,6 +282,8 @@ const Upload = () => {
     setUploadId(null)
     setShowLogs(false)
     setProcessing(false)
+    setFatalError(null)
+    setReviewResult(null)
   }
 
   const pollBackgroundTasks = async (uploadIds) => {
@@ -351,6 +298,14 @@ const Upload = () => {
         )
 
         const allCompleted = statusChecks.every(status => status.all_tasks_completed)
+        const failed = statusChecks.find(status => status.status === 'failed')
+
+        if (failed) {
+          toast.error(`Post-processing failed after retries: ${failed.error || 'check backend logs'}`, {
+            duration: 8000,
+          })
+          return true
+        }
 
         if (allCompleted) {
           // All background tasks completed!
@@ -376,20 +331,22 @@ const Upload = () => {
         return false // Continue polling
       } catch (error) {
         console.error('Error checking background status:', error)
-        return true // Stop polling on error
+        return false // A transient network error must not hide job completion/failure.
       }
     }
 
     // Poll every 3 seconds for up to 2 minutes
     let attempts = 0
-    const maxAttempts = 40 // 40 * 3s = 2 minutes
+    const maxAttempts = 100 // 100 * 3s = 5 minutes
 
-    const pollInterval = setInterval(async () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+    pollIntervalRef.current = setInterval(async () => {
       attempts++
       const shouldStop = await checkStatus()
 
       if (shouldStop || attempts >= maxAttempts) {
-        clearInterval(pollInterval)
+        clearInterval(pollIntervalRef.current)
+        pollIntervalRef.current = null
         if (attempts >= maxAttempts) {
           console.log('Background task polling timed out')
         }
@@ -397,13 +354,34 @@ const Upload = () => {
     }, 3000) // Check every 3 seconds
   }
 
+  useEffect(() => () => {
+    if (pollIntervalRef.current) clearInterval(pollIntervalRef.current)
+  }, [])
+
   return (
     <div className="space-y-6">
       {/* Show LogViewer when processing single file */}
       {showLogs && uploadId ? (
-        <LogViewer uploadId={uploadId} onComplete={handleLogComplete} />
+        <LogViewer uploadId={uploadId} onComplete={handleLogComplete} onError={handleLogError} />
       ) : (
         <>
+          {/* Persistent fatal error panel */}
+          {fatalError && (
+            <div role="alert" className="rounded-2xl border border-red-300 bg-red-50/80 dark:bg-red-950/40 dark:border-red-800 p-6 flex items-start gap-4">
+              <AlertCircle className="w-6 h-6 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />
+              <div className="flex-1">
+                <h3 className="font-bold text-red-800 dark:text-red-300">Processing Failed</h3>
+                <p className="text-sm text-red-700 dark:text-red-400 mt-1">{fatalError}</p>
+                <button
+                  type="button"
+                  onClick={() => setFatalError(null)}
+                  className="mt-3 text-sm font-semibold text-red-700 dark:text-red-400 underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          )}
           {/* Header */}
           <motion.div
             initial={{ opacity: 0, y: -20 }}
@@ -425,9 +403,10 @@ const Upload = () => {
                 whileHover={{ scale: 1.05 }}
                 whileTap={{ scale: 0.95 }}
                 onClick={toggleNotifications}
+                style={!notificationsEnabled ? { backgroundColor: '#ffffff', borderColor: '#ffffff', color: '#1d4ed8' } : undefined}
                 className={`hidden md:flex items-center gap-2 px-6 py-3 rounded-xl font-semibold border-2 transition-all shadow-lg ${notificationsEnabled
                   ? 'bg-green-500 border-green-400 text-white hover:bg-green-600'
-                  : 'bg-white border-white text-primary-700 hover:bg-neutral-50'
+                  : 'hover:bg-blue-50'
                   }`}
               >
                 {notificationsEnabled ? (
@@ -551,7 +530,7 @@ const Upload = () => {
                                   placeholder="Password (if needed)"
                                   value={passwords[file.name] || ''}
                                   onChange={(e) => handlePasswordChange(file.name, e.target.value)}
-                                  className="pl-10 pr-4 py-2 bg-white border border-gray-200 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent outline-none w-48 text-sm text-gray-900 placeholder-gray-400"
+                                  className="pl-10 pr-4 py-2 bg-[var(--bg-secondary)] border border-[var(--border-subtle)] rounded-lg hover:border-[var(--accent-primary)] focus:ring-2 focus:ring-[var(--accent-primary)] focus:border-[var(--accent-primary)] outline-none w-48 text-sm text-[var(--text-primary)] placeholder:text-[var(--text-secondary)]"
                                   disabled={processing}
                                 />
                               </div>
@@ -641,6 +620,24 @@ const Upload = () => {
           </motion.div>
 
           {/* Results - Enhanced Results Card */}
+          {reviewResult && (
+            <div role="alert" className="card border border-amber-300 p-6">
+              <h3 className="text-xl font-bold">Statement needs attention</h3>
+              <p>{reviewResult.message}</p>
+              <p>These transactions have not been added to your financial totals.</p>
+              {reviewResult.validation_report && (
+                <p>{reviewResult.validation_report.retained_count} extracted rows retained for review.</p>
+              )}
+              <button type="button" className="mt-3 underline" onClick={() => {
+                const url = URL.createObjectURL(new Blob([JSON.stringify(reviewResult, null, 2)], { type: 'application/json' }))
+                const link = document.createElement('a')
+                link.href = url
+                link.download = 'statement-review.json'
+                link.click()
+                setTimeout(() => URL.revokeObjectURL(url), 1000)
+              }}>Download review details</button>
+            </div>
+          )}
           <AnimatePresence>
             {results && (
               <EnhancedResultsCard

@@ -4,9 +4,9 @@
 # ============================================================
 # NEW APPROACH (ACTIVE):
 #   - Sends base64-encoded PDF directly to the configured Mistral OCR model
-#   - OCR model reads the document (text, tables, scanned images)
-#     and returns structured JSON transactions in a SINGLE API call
-#   - No secondary LLM call needed
+#   - Mistral Document AI reads every page and returns structured transactions
+#     in bounded, overlapping page groups. Annotations use provider-side models.
+#   - Decimal validation preserves source values and blocks inconsistent output
 #
 # OLD APPROACH (COMMENTED OUT below):
 #   - Classified PDFs as TABLE_BASED / TEXT_BASED / IMAGE_BASED
@@ -48,12 +48,44 @@ from langchain_core.prompts import ChatPromptTemplate
 from langchain_core.output_parsers import JsonOutputParser
 
 from .config import settings
-from .observability import observe_external_llm
+from .finance import money
+from .extraction_validation import normalize_ocr_rows, validate_extraction, ExtractionNeedsReview
+from .observability import observe_external_llm, observed_stage
 from . import models, agents
 from .vector_store_pinecone import PineconeVectorStore
 from .log_streamer import log_streamer
 
 logger = logging.getLogger(__name__)
+
+
+def _is_quota_error(message) -> bool:
+    """True when an exception/message indicates provider quota / rate limits."""
+    if not message:
+        return False
+    lowered = str(message).lower()
+    markers = (
+        "429",
+        "rate limit",
+        "rate_limit",
+        "quota",
+        "resourceexhausted",
+        "resource exhausted",
+        "too many requests",
+        "gemini_quota",
+        "resource has been exhausted",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+def _repair_common_json_issues(text: str) -> str:
+    """Best-effort repair for common LLM JSON mistakes (trailing commas etc.)."""
+    repaired = text.strip()
+    # Remove trailing commas before } or ]
+    repaired = re.sub(r",\s*([}\]])", r"\1", repaired)
+    # Normalize smart quotes that models sometimes emit
+    repaired = repaired.replace("\u201c", '"').replace("\u201d", '"')
+    repaired = repaired.replace("\u2018", "'").replace("\u2019", "'")
+    return repaired
 
 # ============================================================
 # GLOBAL STATE contract for LangGraph
@@ -78,6 +110,7 @@ class ProcessingState(TypedDict):
     corrections: List[Dict]
     streaming_id: Optional[str]
     timing: Dict[str, float]
+    validation_report: Optional[Dict]
 
 
 
@@ -233,7 +266,7 @@ class MistralOCRExtractor:
                         "description": {"type": "string", "description": "Full transaction description. Combine multi-line descriptions belonging to the same transaction into a single string."},
                         "debit":       {"type": "number", "description": "Money OUT of account. If this is a credit, set strictly to 0.00. Do not use commas."},
                         "credit":      {"type": "number", "description": "Money INTO account. If this is a debit, set strictly to 0.00. Do not use commas."},
-                        "balance":     {"type": "number", "description": "Running balance after this transaction. 0.00 if missing or invisible. Do not use commas."}
+                        "balance":     {"type": ["number", "null"], "description": "Running balance after this transaction; null if missing or unreadable. Preserve the decimal point; remove grouping commas only."}
                     },
                     "required": ["date", "description", "debit", "credit", "balance"],
                     "additionalProperties": False
@@ -377,15 +410,14 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
 
         tmp_path = None
         try:
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp_pdf:
-                tmp_pdf.write(pdf_bytes)
-                tmp_path = tmp_pdf.name
-                
-            doc = fitz.open(tmp_path)
+            # Open from memory - decrypted PDFs are already unrestricted.
+            doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             redactions_made = 0
+            extractable_characters = 0
             
             for page in doc:
                 text = page.get_text()
+                extractable_characters += len(text.strip())
                 # Find all unique matches across all patterns on this page
                 matches_to_redact = set()
                 for pattern in patterns:
@@ -406,14 +438,26 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 # Apply redactions, replacing text and drawing white covers over images/vectors
                 page.apply_redactions(images=fitz.PDF_REDACT_IMAGE_NONE)
                 
+            if extractable_characters == 0 and not settings.ALLOW_UNREDACTED_OCR:
+                doc.close()
+                raise ValueError(
+                    "This image-only PDF cannot be safely redacted before hosted OCR. "
+                    "Set ALLOW_UNREDACTED_OCR=true only after approving the provider data policy."
+                )
             if redactions_made > 0:
-                logger.info(f"   [MASK] Successfully redacted {redactions_made} PII instances from PDF.")
-                
-            return doc.tobytes()
+                logger.info(f"[MASK] Successfully redacted {redactions_made} PII instances from PDF.")
+            else:
+                logger.info("[MASK] No PII patterns found to redact; PDF forwarded as-is.")
+            masked_bytes = doc.tobytes()
+            doc.close()
+            return masked_bytes
             
         except Exception as e:
-            logger.error(f"   [WARN] PDF Masking failed: {e}. Proceeding with original PDF.")
-            return pdf_bytes
+            if settings.ALLOW_UNREDACTED_OCR:
+                logger.warning("[MASK] PDF masking failed; explicit unredacted OCR opt-in is enabled: %s", e)
+                return pdf_bytes
+            logger.error("[MASK] PDF masking failed closed: %s", e)
+            raise RuntimeError(f"PDF could not be safely redacted before hosted OCR: {e}") from e
         finally:
             if tmp_path and os.path.exists(tmp_path):
                 try: 
@@ -530,29 +574,48 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             state["timing"]["ocr_primary"] = time.time() - t_start
             return state
 
-        def node_ocr_fallback(state: ProcessingState) -> ProcessingState:
-            logger.info("   [FALLBACK] [4/5] NODE: Vision fallback chain (Gemini -> Z.AI -> deterministic PDF text)...")
+        async def node_ocr_fallback(state: ProcessingState) -> ProcessingState:
+            logger.info("   [FALLBACK] Vision fallback chain (Gemini quota-skip -> Z.AI -> deterministic text)...")
             t_start = time.time()
             fallback_chain = [
                 ("GEMINI_VISION_FALLBACK", self._extract_with_gemini_vision, bool(self.gemini_model)),
                 ("ZAI_GLM_VISION_FALLBACK", self._extract_with_zai_vision, bool(self.zai_vision_model)),
-                ("PDF_TEXT_DETERMINISTIC_FALLBACK", self._extract_with_deterministic_pdf_text, True),
+                ("DETERMINISTIC_PDF_TEXT", self._extract_with_deterministic_pdf_text, True),
             ]
+            skip_gemini = False
             for method, extractor, enabled in fallback_chain:
                 if not enabled:
                     continue
+                if method == "GEMINI_VISION_FALLBACK" and skip_gemini:
+                    continue
                 try:
-                    fb = state.get("masked_pdf") or state["file_bytes"]
-                    doc_type, txns = extractor(fb, state["password"])
+                    logger.info("   [FALLBACK] Trying %s...", method)
+                    password = state.get("password") or ""
+                    doc_type, txns = await asyncio.to_thread(extractor,
+                        state.get("masked_pdf") or state["file_bytes"],
+                        password,
+                    )
                     if txns:
                         state["raw_ocr_output"] = {"transactions": txns}
                         state["extraction_method"] = method
                         logger.info("   [SUCCESS] %s returned %d transactions", method, len(txns))
                         break
+                    logger.warning("   [FALLBACK] %s returned 0 transactions", method)
+                    state["errors"].append(f"{method} returned 0 transactions.")
                 except Exception as e:
-                    state["errors"].append(f"{method} Error: {str(e)}")
+                    err = str(e)
+                    state["errors"].append(f"{method} Error: {err}")
+                    if method == "GEMINI_VISION_FALLBACK" and _is_quota_error(err):
+                        skip_gemini = True
+                        logger.warning(
+                            "   [FALLBACK] Gemini quota/rate limit exhausted - "
+                            "skipping Gemini, going straight to Z.AI."
+                        )
+                    else:
+                        logger.warning("   [FALLBACK] %s failed: %s", method, err)
             else:
                 state["errors"].append("All OCR fallbacks returned no transactions.")
+                logger.error("   [FAIL] All OCR fallbacks exhausted with no transactions.")
             
             state["timing"]["ocr_fallback"] = time.time() - t_start
             return state
@@ -566,7 +629,36 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 state["timing"]["verify"] = time.time() - t_start
                 return state
             try:
-                validated = self._validate_transactions(raw_txns)
+                summary = getattr(raw_txns, "summary", None)
+                normalized_txns, corrections = normalize_ocr_rows(raw_txns)
+                report = validate_extraction(normalized_txns, self._parse_date, summary)
+                report["normalization_corrections"] = corrections
+                report['evidence'] = getattr(raw_txns, 'evidence', {})
+                report["issues"].extend(getattr(raw_txns, "coverage", []))
+                if report["issues"]:
+                    report["status"] = "needs_review"
+                try:
+                    from .observability import current_trace
+                    trace = current_trace()
+                    if trace:
+                        balance_checks = int(report.get("balance_checks", 0) or 0)
+                        balance_matches = int(report.get("balance_matches", 0) or 0)
+                        trace.record_evaluation(
+                            "extraction_consistency",
+                            1.0 if report["status"] == "checks_passed" else 0.0,
+                            report["status"] == "checks_passed",
+                            {"retained_count": report.get("retained_count", 0), "issues": len(report.get("issues", []))},
+                        )
+                        if balance_checks:
+                            trace.record_evaluation(
+                                "running_balance_consistency",
+                                balance_matches / balance_checks,
+                                balance_matches == balance_checks,
+                                {"matches": balance_matches, "checks": balance_checks},
+                            )
+                except Exception:
+                    logger.debug("Unable to record extraction evaluation", exc_info=True)
+                validated = report["transactions"]
                 
                 masker = getattr(self, "masker", None)
                 if not masker:
@@ -575,15 +667,23 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     self.masker = masker
                 
                 for v in validated:
-                    if v.get("description"):
-                        v["description"] = masker.mask_description(v["description"])
+                    # ``mask_transaction`` extracts only allow-listed public
+                    # merchant labels locally, then redacts the narration.
+                    # It never retains personal UPI IDs or free-form names.
+                    v.update(masker.mask_transaction(v))
                     v['extraction_method'] = state["extraction_method"]
                     v['document_type'] = state["document_type"]
                     
                 state["cleaned_transactions"] = validated
+                state["validation_report"] = report
+                if report["status"] == "needs_review":
+                    raise ExtractionNeedsReview(report)
                 logger.info(f"      -> Verified {len(validated)} transactions.")
+            except ExtractionNeedsReview:
+                raise
             except Exception as e:
                 state["errors"].append(f"Verification Error: {str(e)}")
+                raise
             
             state["timing"]["verify"] = time.time() - t_start
             return state
@@ -591,6 +691,9 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         async def node_categorize(state: ProcessingState) -> ProcessingState:
             logger.info("   [CAT] [7/11] NODE: Categorization (LLM-First Structured Output)...")
             t_start = time.time()
+            from copy import deepcopy
+            from .evaluation import categorization_integrity, publish
+            original = deepcopy(state["cleaned_transactions"])
             if not state["cleaned_transactions"]:
                 state["timing"]["categorize"] = 0
                 return state
@@ -600,7 +703,8 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     state["cleaned_transactions"], 
                     user_id=state.get("user_id"),
                     user_name=state.get("user_name", "User"),
-                    streaming_id=state.get("streaming_id")
+                    streaming_id=state.get("streaming_id"),
+                    corrections=state.get("corrections") or [],
                 )
                 state["categorized_transactions"] = categorized
             except Exception as e:
@@ -611,6 +715,10 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     tx["category"] = "Others"
                 state["categorized_transactions"] = state["cleaned_transactions"]
             
+            checks = categorization_integrity(original, state["categorized_transactions"])
+            publish(checks)
+            if not checks[0]["passed"]:
+                raise RuntimeError("Categorization changed financial fields; persistence blocked")
             state["timing"]["categorize"] = time.time() - t_start
             return state
 
@@ -686,9 +794,9 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                     db_txns.append(models.Transaction(
                         date=tx_date,
                         description=tx.get("description", "No description"),
-                        amount=float(tx.get("amount", 0)),
-                        debit=float(tx.get("debit", 0)),
-                        credit=float(tx.get("credit", 0)),
+                        amount=money(tx.get("amount", 0)),
+                        debit=money(tx.get("debit", 0)),
+                        credit=money(tx.get("credit", 0)),
                         category=tx.get("category", "Others"),
                         upload_id=state["db_upload_id"],
                         user_id=state["user_id"]
@@ -731,7 +839,7 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             raw_data = state.get("raw_ocr_output")
             method = state.get("extraction_method")
             
-            if raw_data and method in ["MISTRAL_OCR_3", "MISTRAL_OCR_3_PARALLEL", "MISTRAL_OCR_3_SEQUENTIAL"]:
+            if raw_data and raw_data.get("transactions"):
                 logger.info(f"    ROUTING: Mistral Successful ({len(raw_data.get('transactions', []))} txns). Jumping to Verification.")
                 return "verify"
             
@@ -741,12 +849,12 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         # 4. Compile the Graph (Sync Phase: Extraction + Reasoning)
         workflow = StateGraph(ProcessingState)
 
-        workflow.add_node("analyze", node_analyze)
-        workflow.add_node("mask", node_mask)
-        workflow.add_node("mistral", node_ocr_primary)
-        workflow.add_node("gemini", node_ocr_fallback)
-        workflow.add_node("verify", node_verify)
-        workflow.add_node("categorize", node_categorize)
+        workflow.add_node("analyze", observed_stage("document_analysis")(node_analyze))
+        workflow.add_node("mask", observed_stage("masking")(node_mask))
+        workflow.add_node("mistral", observed_stage("ocr_primary")(node_ocr_primary))
+        workflow.add_node("gemini", observed_stage("ocr_fallback")(node_ocr_fallback))
+        workflow.add_node("verify", observed_stage("extraction_validation")(node_verify))
+        workflow.add_node("categorize", observed_stage("categorization")(node_categorize))
         # NOTE: insights, db, vector run in background - NOT in sync graph
 
         # Build Edges
@@ -764,52 +872,85 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         workflow.add_edge("verify", "categorize")
         workflow.add_edge("categorize", END)  # [START] Hot-path ends here. UI can show results immediately!
 
-        # insights, db, vector -> all triggered in _run_post_processing_background()
+        # insights, db, vector -> durable worker via post_processing.persist_statement_and_enqueue()
 
         app = workflow.compile()
 
         # 5. Invoke Sync Pipeline (Hot-Path)
-        initial_state = ProcessingState(
-            file_path=filename,
-            file_bytes=self._decrypt_pdf_if_needed(pdf_bytes, password, filename),
-            password=password,
-            user_id=user_id,
-            user_name=user_name,
-            document_type=None,
-            extraction_method="None",
-            masked_pdf=None,
-            raw_ocr_output=None,
-            cleaned_transactions=[],
-            categorized_transactions=[],
-            insights=None,
-            audit_log_path=None,
-            errors=[],
-            vector_ids=[],
-            db_upload_id=None,
-            corrections=corrections,
-            streaming_id=streaming_id,
-            timing={}
-        )
+        # Hosted OCR is non-deterministic: the same statement can parse cleanly
+        # on one call and return broken tables on the next. On validation
+        # failure, retry the whole extraction with fresh state (bounded).
+        # The gate below is unchanged: only checks_passed data can proceed.
+        def _fresh_state():
+            return ProcessingState(
+                file_path=filename,
+                file_bytes=self._decrypt_pdf_if_needed(pdf_bytes, password, filename),
+                password=password,
+                user_id=user_id,
+                user_name=user_name,
+                document_type=None,
+                extraction_method="None",
+                masked_pdf=None,
+                raw_ocr_output=None,
+                cleaned_transactions=[],
+                categorized_transactions=[],
+                insights=None,
+                audit_log_path=None,
+                errors=[],
+                vector_ids=[],
+                db_upload_id=None,
+                corrections=corrections,
+                streaming_id=streaming_id,
+                validation_report=None,
+                timing={}
+            )
+
+        best_report, best_error = None, None
+        final_state = None
+        max_attempts = 1 + 2  # first try + 2 bounded retries
+        for attempt in range(1, max_attempts + 1):
+            try:
+                final_state = await app.ainvoke(_fresh_state())
+                best_report = None
+                break
+            except Exception as e:
+                from .extraction_validation import ExtractionNeedsReview as _ENR
+                if not isinstance(e, _ENR):
+                    raise
+                report = getattr(e, "report", {}) or {}
+                n_issues = len(report.get("issues", []))
+                logger.warning(
+                    f"   [RETRY] Extraction attempt {attempt}/{max_attempts} needs review "
+                    f"({n_issues} issues).{' Retrying OCR...' if attempt < max_attempts else ' No attempts left.'}"
+                )
+                if best_report is None or n_issues < len(best_report.get("issues", [])):
+                    best_report, best_error = report, e
+                if attempt >= max_attempts:
+                    raise best_error
+                if streaming_id:
+                    await log_streamer.add_log(
+                        streaming_id,
+                        f"[RETRY] OCR output failed validation ({n_issues} issues). "
+                        f"Re-reading document (attempt {attempt + 1}/{max_attempts})...",
+                        "warning", 60)
 
         try:
-            final_state = await app.ainvoke(initial_state)
+            assert final_state is not None
             
-            # Hot-path complete: transactions are ready, return to user immediately!
+            # Verified transactions are durable before the API reports success.
+            from .post_processing import persist_statement_and_enqueue
+            await persist_statement_and_enqueue(final_state)
+
             if streaming_id:
-                await log_streamer.add_log(streaming_id, "[OK] Categorization Complete! Your results are ready.", "success", 98)
-                await log_streamer.add_log(streaming_id, "[RETRY] Insights & Persistence running in background...", "info", 100)
-
-            # Persist a job record before launching the best-effort in-process
-            # task. A separate worker can later claim queued jobs after restart.
-            await models.ProcessingJob(
-                upload_id=streaming_id or str(uuid.uuid4()),
-                user_id=str(user_id),
-                status="queued",
-                stage="post_processing",
-            ).insert()
-
-            # TRIGGER ASYNC PHASE (Background: Insights, DB, Vector)
-            asyncio.create_task(self._run_post_processing_background(final_state))
+                await log_streamer.add_log(streaming_id, "[OK] Transactions verified and saved.", "success", 85)
+                await log_streamer.add_log(streaming_id, "[QUEUE] Insights and vector indexing queued safely.", "info", 90)
+                # Terminal success marker so SSE clients close cleanly.
+                await log_streamer.add_log(
+                    streaming_id,
+                    "[COMPLETE] Extraction pipeline finished successfully.",
+                    "complete",
+                    100,
+                )
             
         except Exception as e:
             logger.error(f"Graph Execution Fatal Error: {e}")
@@ -823,246 +964,9 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             "transactions": final_state.get("categorized_transactions", []),
             "insights": {},  # Insights are generated in background; fetch via /api/uploads/{id} later
             "errors": final_state.get("errors", []),
+            "validation_report": final_state.get("validation_report"),
             "processing_time": time.time() - start_time
         }
-
-    async def _run_post_processing_background(self, state: ProcessingState):
-        """
-        COLD-PATH: DB Storage -> Insights -> Vector Indexing -> Audit Log.
-        Transactions persist FIRST (they are the source of truth); insights
-        and vectors are optional stages that can fail without losing data.
-        Final job status is honest: completed / completed_with_warnings / failed.
-        Runs AFTER the user has already received their categorized transactions.
-        """
-        from decimal import Decimal as _Decimal
-
-        t_bg_start = time.time()
-        streaming_id = state.get("streaming_id")
-        job = await models.ProcessingJob.find_one(
-            models.ProcessingJob.upload_id == streaming_id,
-            models.ProcessingJob.user_id == str(state.get("user_id")),
-        )
-        stage_state: Dict[str, str] = {}
-        warnings: List[str] = []
-
-        def _money(value) -> _Decimal:
-            # Keep money as Decimal quantized to paise end-to-end. Never float:
-            # binary floats silently corrupt paise (0.1 + 0.2 != 0.3).
-            try:
-                return _Decimal(str(value)).quantize(_Decimal("0.01"))
-            except Exception:
-                return _Decimal("0.00")
-
-        try:
-            if job:
-                job.status = "running"
-                job.attempts += 1
-                job.started_at = datetime.utcnow()
-                await job.save()
-            logger.info(f"[API] [Background] Starting post-processing for {streaming_id}")
-
-            #  STEP 1: Database Storage (MongoDB) — FIRST, always.
-            # Transactions are the source of truth; insights/vectors are
-            # optional stages that must never block or lose persisted data.
-            db_upload_id = None
-            db_txns = []
-            db_ok = False
-            if state.get("categorized_transactions"):
-                try:
-                    file_hash = hashlib.sha256(state["file_bytes"]).hexdigest()
-                    upload = await models.Upload.find_one(
-                        models.Upload.upload_id == streaming_id,
-                        models.Upload.user_id == str(state["user_id"]),
-                    )
-                    if upload is None:
-                        upload = models.Upload(
-                            upload_id=streaming_id,
-                            file_hash=file_hash,
-                            filename=state["file_path"],
-                            file_size_bytes=len(state["file_bytes"]),
-                            user_id=state["user_id"],
-                        )
-
-                    # Complete the reservation created by the API before
-                    # inserting child transactions. A retry now updates the
-                    # same upload instead of creating a second upload record.
-                    upload.file_hash = file_hash
-                    upload.filename = state["file_path"]
-                    upload.file_size_bytes = len(state["file_bytes"])
-                    upload.status = "completed"
-                    upload.user_id = state["user_id"]
-                    upload.bank_name = state["document_type"] or "Statement"
-                    upload.extraction_method = state["extraction_method"]
-                    upload.total_transactions = len(state["categorized_transactions"])
-                    upload.processing_time_seconds = round(time.time() - t_bg_start, 2)
-                    # Insights attach later in STEP 2 (bg_insights not built yet here).
-                    await upload.save()
-                    db_upload_id = str(upload.id)
-
-                    # IDEMPOTENT SAVE: background runs can repeat for the same
-                    # upload (retries, restarts, re-uploads). Clear prior rows
-                    # first so transactions are never duplicated.
-                    await models.Transaction.find(
-                        models.Transaction.upload_id == streaming_id
-                    ).delete()
-
-                    for tx in state["categorized_transactions"]:
-                        tx_date = tx.get("date")
-                        if isinstance(tx_date, str):
-                            try: tx_date = datetime.strptime(tx_date, "%Y-%m-%d").date()
-                            except: tx_date = datetime.now().date()
-
-                        _amt = _money(tx.get("amount", 0))
-                        _dbt = _money(tx.get("debit", 0))
-                        _crd = _money(tx.get("credit", 0))
-                        db_txns.append(models.Transaction(
-                            date=tx_date,
-                            description=tx.get("description", "No description"),
-                            amount=_amt,
-                            debit=_dbt,
-                            credit=_crd,
-                            category=tx.get("category", "Other"),
-                            upload_id=streaming_id,
-                            user_id=state["user_id"],
-                            # Quarantine OCR garbage (e.g. merged columns
-                            # producing billion-scale amounts).
-                            needs_review=max(abs(_amt), abs(_dbt), abs(_crd)) > _Decimal("1000000000"),
-                        ))
-
-                    if db_txns:
-                        await models.Transaction.insert_many(db_txns)
-                    upload.db_save_completed = True
-                    await upload.save()
-                    db_ok = True
-                    stage_state["db"] = "ok"
-                    logger.info(f"   [OK] [Background] Saved {len(db_txns)} transactions to MongoDB.")
-                except Exception as e:
-                    stage_state["db"] = f"failed: {e}"
-                    warnings.append(f"DB persist failed: {e}")
-                    logger.error(f"Background DB Error: {e}")
-
-            #  STEP 2: Generate Financial Insights (LLM, slow, optional).
-            # Runs AFTER persistence so a slow/rate-limited insights agent can
-            # never delay or lose otherwise-valid transactions.
-            bg_insights = {}
-            if state.get("categorized_transactions"):
-                try:
-                    logger.info("   [BRAIN] [Background] Generating Financial Insights...")
-                    analyst = agents.FinancialAnalystAgent()
-                    bg_insights = await analyst.generate_financial_insights(state["categorized_transactions"])
-                    stage_state["insights"] = "ok"
-                    logger.info("   [OK] [Background] Insights generated.")
-                except Exception as e:
-                    stage_state["insights"] = f"failed: {e}"
-                    warnings.append(f"Insights failed: {e}")
-                    logger.error(f"Background Insights Error: {e}")
-            try:
-                upload = await models.Upload.find_one(
-                    models.Upload.upload_id == streaming_id,
-                    models.Upload.user_id == str(state.get("user_id")),
-                )
-                if upload and isinstance(bg_insights, dict):
-                    upload.insights = bg_insights.get("insights", [])
-                    await upload.save()
-            except Exception as e:
-                warnings.append(f"Insights attach failed: {e}")
-                logger.error(f"Background Insights Attach Error: {e}")
-
-
-            #  STEP 3: Vector Indexing (Pinecone) 
-            if db_upload_id:
-                try:
-                    from .vector_store_pinecone import PineconeVectorStore
-                    vector_db = PineconeVectorStore(
-                        api_key=settings.PINECONE_API_KEY,
-                        environment=settings.PINECONE_ENVIRONMENT,
-                        index_name=settings.PINECONE_INDEX_NAME
-                    )
-                    tx_dicts = []
-                    for i, tx in enumerate(state["categorized_transactions"]):
-                        d = tx.copy()
-                        d["upload_id"] = streaming_id
-                        d["user_id"] = state["user_id"]
-                        if i < len(db_txns):
-                            d["transaction_id"] = str(db_txns[i].id)
-                        else:
-                            import uuid
-                            d["transaction_id"] = str(uuid.uuid4())
-                        tx_dicts.append(d)
-                    
-                    await vector_db.add_transactions(tx_dicts)
-                    upload.vector_index_completed = True
-                    await upload.save()
-                    stage_state["vectors"] = "ok"
-                    logger.info(f"   [OK] [Background] Indexed {len(tx_dicts)} vectors in Pinecone.")
-                except Exception as e:
-                    stage_state["vectors"] = f"failed: {e}"
-                    warnings.append(f"Vector indexing failed: {e}")
-                    logger.warning(f"Background Vector Error: {e}")
-
-            #  STEP 4: Audit Logging (full timings available now)
-            # + HONEST final status. Completed ONLY when transactions persisted.
-            try:
-                t_bg_end = time.time()
-                bg_duration = t_bg_end - t_bg_start
-                state["timing"]["background_tasks"] = bg_duration
-
-                raw_txns = state["raw_ocr_output"].get("transactions", []) if state["raw_ocr_output"] else []
-                total_duration = sum(state["timing"].values())
-
-                self._write_ocr_log(
-                    filename=state["file_path"],
-                    extraction_method=state["extraction_method"],
-                    document_type=state["document_type"] or "unknown",
-                    raw_transactions=raw_txns,
-                    validated_transactions=state["cleaned_transactions"],
-                    elapsed=total_duration,
-                    timing_breakdown=state["timing"]
-                )
-                final_status = (
-                    "completed" if db_ok and not warnings
-                    else "completed_with_warnings" if db_ok
-                    else "failed"
-                )
-                logger.info(
-                    f"   [OK] [Background] Post-processing {final_status} "
-                    f"in {bg_duration:.1f}s. stages={stage_state}"
-                )
-                try:
-                    upload = await models.Upload.find_one(
-                        models.Upload.upload_id == streaming_id,
-                        models.Upload.user_id == str(state.get("user_id")),
-                    )
-                    if upload:
-                        upload.status = (
-                            "completed" if final_status == "completed"
-                            else "failed" if final_status == "failed"
-                            else "completed_with_warnings"
-                        )
-                        if warnings:
-                            upload.error_message = "; ".join(warnings)[:2000]
-                        await upload.save()
-                except Exception as e:
-                    warnings.append(f"Upload status update failed: {e}")
-                if job:
-                    job.status = final_status
-                    job.stage = "complete"
-                    job.stages = dict(stage_state)
-                    job.warnings = list(warnings)
-                    if warnings and not job.error_message:
-                        job.error_message = "; ".join(warnings)[:2000]
-                    job.completed_at = datetime.utcnow()
-                    await job.save()
-            except Exception as e:
-                logger.warning(f"Background Final Audit Error: {e}")
-
-        except Exception as e:
-            logger.error(f"[FAIL] Critical Background Failure: {e}")
-            if job:
-                job.status = "failed"
-                job.error_message = "Post-processing failed"
-                await job.save()
-
 
     # ----------------------------------------------------------
     # PRIVATE: OCR log writer
@@ -1148,44 +1052,68 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         the decrypted bytes so Mistral OCR receives a readable document.
         """
         if not password:
-            return pdf_bytes
+            password = ""
 
         try:
             import fitz  # PyMuPDF
-            import tempfile
-
-            logger.info("[UNLOCKED] Decrypting password-protected PDF before OCR...")
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
-                tmp.write(pdf_bytes)
-                tmp_path = tmp.name
-
-            try:
-                doc = fitz.open(tmp_path)
-                if doc.needs_pass:
-                    if not doc.authenticate(password):
-                        raise ValueError(
-                            f"Incorrect password for PDF: {filename}"
-                        )
-                # Write decrypted version
-                import io as _io
-                buffer = _io.BytesIO()
-                doc.save(buffer)
-                doc.close()
-                decrypted_bytes = buffer.getvalue()
-                logger.info(" PDF decrypted successfully")
-                return decrypted_bytes
-            finally:
-                os.unlink(tmp_path)
-
         except ImportError:
             logger.warning(
-                "PyMuPDF (fitz) not installed  sending encrypted PDF to Mistral. "
-                "Mistral OCR may not be able to read it. Install with: pip install pymupdf"
+                "PyMuPDF (fitz) not installed - cannot decrypt PDF. "
+                "Install with: pip install pymupdf"
             )
             return pdf_bytes
+
+        logger.info(f"[DECRYPT] Checking PDF encryption for: {filename}")
+        try:
+            # Prefer stream open (no temp file). Fall back to temp file only
+            # if stream open fails for exotic PDFs.
+            try:
+                doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+            except Exception:
+                import tempfile
+                with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
+                    tmp.write(pdf_bytes)
+                    tmp_path = tmp.name
+                try:
+                    doc = fitz.open(tmp_path)
+                finally:
+                    try:
+                        os.unlink(tmp_path)
+                    except OSError:
+                        pass
+
+            try:
+                if doc.needs_pass:
+                    if not password or not doc.authenticate(password):
+                        # Fail loudly: returning encrypted bytes causes masking
+                        # to crash later with a confusing PyMuPDF error.
+                        raise ValueError(f"Incorrect password for PDF: {filename}")
+                    logger.info(f"[DECRYPT] Password accepted for {filename}")
+
+                import io as _io
+                buffer = _io.BytesIO()
+                # Always write a fully unrestricted copy so downstream
+                # open()/mask/OCR steps never re-hit encryption checks.
+                try:
+                    doc.save(buffer, encryption=fitz.PDF_ENCRYPT_NONE, garbage=4, deflate=True)
+                except TypeError:
+                    # Older PyMuPDF without encryption kwarg
+                    doc.save(buffer)
+                decrypted_bytes = buffer.getvalue()
+                logger.info(f"[DECRYPT] PDF decrypted successfully ({len(decrypted_bytes)} bytes)")
+                return decrypted_bytes
+            finally:
+                doc.close()
+
+        except ValueError:
+            # Incorrect password - re-raise so the user gets a clear error.
+            raise
         except Exception as e:
-            logger.warning(f"Could not decrypt PDF: {e}. Sending as-is.")
-            return pdf_bytes
+            logger.error(f"[DECRYPT] Failed to decrypt PDF {filename}: {e}")
+            raise RuntimeError(
+                f"Could not decrypt PDF '{filename}'. "
+                f"Check that the password is correct and the file is not corrupt."
+            ) from e
 
     def _ocr_pdf_with_mistral_specialized(self, pdf_bytes: bytes, filename: str, document_type: str) -> Tuple[str, List[Dict]]:
         """
@@ -1299,107 +1227,25 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
         return (document_type, [])
 
     def _ocr_pdf_with_mistral(self, pdf_bytes: bytes, filename: str) -> Tuple[str, List[Dict]]:
-        """
-        Send the PDF to the configured Mistral OCR model using the dedicated OCR API.
-        Returns: (document_type, transactions list)
-        """
-        logger.info(f"[API] Sending PDF to Mistral OCR API ({settings.MISTRAL_OCR_MODEL})...")
-
-        # Encode PDF as base64 data URI
-        b64_pdf = base64.standard_b64encode(pdf_bytes).decode("utf-8")
-        document_data_uri = f"data:application/pdf;base64,{b64_pdf}"
-
-        logger.info(
-            f"   PDF size: {len(pdf_bytes) / 1024:.1f} KB  |  "
-            f"Base64 size: {len(b64_pdf) / 1024:.1f} KB"
+        from .mistral_table_extractor import extract_tables
+        return extract_tables(
+            self.client, pdf_bytes, settings.MISTRAL_OCR_MODEL,
+            timeout_ms=int(settings.OCR_TIMEOUT_SECONDS * 1000),
+            concurrency=settings.OCR_MAX_CONCURRENCY,
+            page_limit=settings.OCR_TABLE_PAGE_LIMIT,
+            max_retries=settings.OCR_MAX_RETRIES,
         )
-
-        # JSON schema for structured output (default: bank statement)
-        annotation_format = {
-            "type": "json_schema",
-            "json_schema": {
-                "name": "FinancialDocument",
-                "schema": self.TRANSACTION_SCHEMA,
-                "strict": True,
-            },
-        }
-
-        max_retries = 3
-        last_error = None
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                logger.info(f"   [RETRY] Attempt {attempt}/{max_retries}...")
-
-                with observe_external_llm("mistral", settings.MISTRAL_OCR_MODEL, kind="ocr") as span:
-                    ocr_response = self.client.ocr.process(
-                        model=settings.MISTRAL_OCR_MODEL,
-                        document={
-                            "type": "document_url",
-                            "document_url": document_data_uri,
-                        },
-                        document_annotation_format=annotation_format,
-                        document_annotation_prompt=self.EXTRACTION_PROMPT,
-                        include_image_base64=False,
-                    )
-                    span.response = ocr_response
-
-                logger.info("   [OK] Mistral OCR API responded successfully")
-
-                # --- Primary path: structured annotation ---
-                if hasattr(ocr_response, "document_annotation") and ocr_response.document_annotation:
-                    ann = ocr_response.document_annotation
-                    if isinstance(ann, dict):
-                        data = ann
-                    else:
-                        data = json.loads(str(ann))
-                        
-                    doc_type = data.get("document_type", "unknown")
-                    transactions = data.get("transactions", [])
-                    
-                    logger.info(f"    Structured annotation: Type={doc_type}, {len(transactions)} transactions")
-                    return doc_type, transactions
-
-                # --- Fallback: concatenate page markdown, parse JSON ---
-                pages = getattr(ocr_response, "pages", []) or []
-                if pages:
-                    logger.info(f"    Processing {len(pages)} page(s) of OCR markdown...")
-                    markdown_text = "\n\n".join(
-                        getattr(p, "markdown", "") or "" for p in pages
-                    )
-                    doc_type, transactions = self._parse_json_response(markdown_text)
-                    if transactions:
-                        logger.info(f"    Parsed {len(transactions)} transactions from markdown")
-                        return doc_type, transactions
-
-                logger.warning(f"   [WARN]  Attempt {attempt}: No transactions found, retrying...")
-                last_error = ValueError("Empty transactions from Mistral OCR")
-
-            except Exception as e:
-                last_error = e
-                error_msg = str(e)
-                logger.warning(f"   [WARN]  Attempt {attempt} failed: {e}")
-                
-                # IMMEDIATE FALLBACK on 502 or 504 (Server Overloaded/Down)
-                # Don't waste time retrying if the provider is down; jump to Gemini immediately to save frontend from timeout.
-                if "502" in error_msg or "504" in error_msg or "Bad Gateway" in error_msg:
-                    logger.error("   [CRITICAL] Mistral API is currently down (502/504). Aborting retries and falling back to Gemini.")
-                    break
-
-                if attempt < max_retries:
-                    wait = 2 ** attempt
-                    logger.info(f"    Waiting {wait}s before retry...")
-                    time.sleep(wait)
-
-        logger.error(f"   [FAIL] All {max_retries} attempts failed. Last error: {last_error}")
-        raise RuntimeError(f"Mistral OCR extraction failed: {last_error}")
 
     def _parse_json_response(self, response_text: str) -> Tuple[str, List[Dict]]:
         """
         Parse the JSON transaction list from a raw response string.
         Returns: (document_type, transactions list)
+
+        Raises ValueError when the payload is non-empty but unparseable so the
+        caller can fall through to the next OCR provider instead of treating a
+        broken response as "0 transactions".
         """
-        if not response_text:
+        if not response_text or not response_text.strip():
             return "unknown", []
 
         text = response_text.strip()
@@ -1411,158 +1257,72 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                 lines = lines[1:]
             if lines and lines[-1].startswith("```"):
                 lines = lines[:-1]
-            text = "\n".join(lines)
+            text = "\n".join(lines).strip()
 
-        try:
-            data = json.loads(text)
+        candidates = [text]
+        # Extract first balanced {...} or [...] if prose wraps the JSON.
+        for open_ch, close_ch in (("{", "}"), ("[", "]")):
+            start = text.find(open_ch)
+            end = text.rfind(close_ch)
+            if start != -1 and end > start:
+                candidates.append(text[start:end + 1])
 
-            if isinstance(data, dict):
-                doc_type = data.get("document_type", "unknown")
-                if "transactions" in data and isinstance(data["transactions"], list):
-                    return doc_type, data["transactions"]
+        last_error: Optional[json.JSONDecodeError] = None
+        for candidate in candidates:
+            for variant in (candidate, _repair_common_json_issues(candidate)):
+                try:
+                    data = json.loads(variant)
+                except json.JSONDecodeError as e:
+                    last_error = e
+                    continue
 
-            # Sometimes models return the array directly
-            if isinstance(data, list):
-                return "unknown", data
+                if isinstance(data, dict):
+                    doc_type = data.get("document_type", "unknown")
+                    if "transactions" in data and isinstance(data["transactions"], list):
+                        return doc_type, data["transactions"]
+                    # Some models nest under "data"
+                    nested = data.get("data")
+                    if isinstance(nested, dict) and isinstance(nested.get("transactions"), list):
+                        return nested.get("document_type", doc_type), nested["transactions"]
 
-            logger.warning(f"Unexpected JSON structure: keys = {list(data.keys()) if isinstance(data, dict) else type(data)}")
-            return "unknown", []
+                # Sometimes models return the array directly
+                if isinstance(data, list):
+                    return "unknown", data
 
-        except json.JSONDecodeError as e:
-            logger.error(f"JSON decode error: {e}")
-            logger.debug(f"Raw response (first 500 chars): {response_text[:500]}")
-            return "unknown", []
+                logger.warning(
+                    "[PARSE] Unexpected JSON structure: keys = %s",
+                    list(data.keys()) if isinstance(data, dict) else type(data),
+                )
+                return "unknown", []
+
+        # Non-empty response that we could not parse - fail loudly so fallbacks run.
+        snippet = response_text[:300].replace("\n", " ")
+        logger.error(
+            "[PARSE] JSON decode failed: %s | raw[:300]=%r",
+            last_error, snippet,
+        )
+        if last_error:
+            raise ValueError(f"JSON decode error: {last_error}") from last_error
+        raise ValueError("Model response was not valid JSON")
 
     # ----------------------------------------------------------
     # SHARED HELPERS (validation, date parsing, keywords)
     # ----------------------------------------------------------
 
     def _validate_transactions(self, transactions: List[Dict]) -> List[Dict]:
-        """
-        Validate and clean extracted transactions.
-        - Parses dates to YYYY-MM-DD
-        - Ensures debit/credit are set correctly
-        - Uses balance tracking to auto-correct debit/credit mismatches
-        - Tags each transaction with extraction_method = MISTRAL_OCR
-        """
-        validated = []
-        prev_balance = None
-        corrections_made = 0
-
-        logger.info(f"\n{'='*80}")
-        logger.info(f"[SEARCH] VALIDATING {len(transactions)} TRANSACTIONS")
-        logger.info(f"{'='*80}")
-
-        for idx, txn in enumerate(transactions, 1):
-            try:
-                # Parse date
-                date_str = str(txn.get("date", "")).strip()
-                parsed_date = self._parse_date(date_str)
-                if not parsed_date:
-                    logger.debug(f"   Skipping transaction {idx}: unparseable date '{date_str}'")
-                    continue
-
-                # Core fields
-                description = str(txn.get("description", "")).strip()[:200]
-                if not description:
-                    continue
-
-                debit  = float(txn.get("debit",  0) or 0)
-                credit = float(txn.get("credit", 0) or 0)
-                amount = float(txn.get("amount", 0) or 0)
-                balance_raw = txn.get("balance")
-                # Fix: use `is not None` instead of truthiness so balance=0.0 is not skipped
-                balance = float(balance_raw) if balance_raw is not None else None
-
-                # If Mistral returned only an 'amount' field, use keywords to classify
-                if debit == 0 and credit == 0 and amount > 0:
-                    desc_lower = description.lower()
-                    is_debit  = any(kw in desc_lower for kw in self.debit_keywords)
-                    is_credit = any(kw in desc_lower for kw in self.credit_keywords)
-
-                    if is_debit:
-                        debit = amount
-                    elif is_credit:
-                        credit = amount
-                    elif balance is not None and prev_balance is not None:
-                        if balance < prev_balance:
-                            debit = amount
-                        else:
-                            credit = amount
-                    else:
-                        debit = amount  # default to debit
-
-                #  BULLETPROOF CORRECTOR: "Test Both Possibilities" 
-                # Instead of trusting Mistral's debit/credit column blindly,
-                # mathematically test both hypotheses against the balance.
-                txn_amount = debit if debit > 0 else credit
-                
-                if txn_amount > 0 and balance is not None and prev_balance is not None:
-                    # HEURISTIC: Does the original OCR mapping already work?
-                    original_option = round(prev_balance - debit + credit, 2)
-                    if abs(original_option - balance) < 0.05:
-                        # Original is correct enough! Don't flip.
-                        prev_balance = balance
-                    else:
-                        # Original is broken, try flipping
-                        option_debit  = round(prev_balance - txn_amount, 2)
-                        option_credit = round(prev_balance + txn_amount, 2)
-
-                        error_debit  = abs(option_debit  - balance)
-                        error_credit = abs(option_credit - balance)
-
-                        if error_debit <= error_credit:
-                            # Math says DEBIT is correct
-                            if credit > 0:
-                                logger.info(f"   [WARN]  Correction #{idx}: math says DEBIT (err={error_debit:.2f})  flipping CrDr")
-                                corrections_made += 1
-                            debit, credit = txn_amount, 0.0
-                            prev_balance = option_debit
-                        else:
-                            # Math says CREDIT is correct
-                            if debit > 0:
-                                logger.info(f"   [WARN]  Correction #{idx}: math says CREDIT (err={error_credit:.2f})  flipping DrCr")
-                                corrections_made += 1
-                            credit, debit = txn_amount, 0.0
-                            prev_balance = option_credit
-                else:
-                    # No balance info available  keep Mistral's classification as-is
-                    if balance is not None:
-                        prev_balance = balance
-
-                final_amount = debit if debit > 0 else credit
-                if final_amount == 0:
-                    continue
-
-                validated.append({
-                    "date":              parsed_date,
-                    "description":       description,
-                    "debit":             debit,
-                    "credit":            credit,
-                    "amount":            final_amount,
-                    "balance":           balance if balance is not None else 0.0,
-                    "category":          "Uncategorized",
-                    "extraction_method": "MISTRAL_OCR",
-                })
-
-            except Exception as e:
-                logger.warning(f"   [WARN]  Transaction {idx} validation error: {e}")
-                continue
-
-        logger.info(f"\n{'='*80}")
-        logger.info(
-            f"[OK] VALIDATION COMPLETE: {len(validated)}/{len(transactions)} transactions"
-        )
-        if corrections_made > 0:
-            logger.info(f"    Balance-based corrections made: {corrections_made}")
-        logger.info(f"{'='*80}\n")
-
-        return validated
+        """Normalize without dropping rows or repairing financial evidence."""
+        from .extraction_validation import validate_extraction
+        return validate_extraction(transactions, self._parse_date)["transactions"]
 
     def _parse_date(self, date_str: str) -> Optional[str]:
         """Parse date to YYYY-MM-DD from common formats."""
         if not date_str:
             return None
+        for pattern in ("%d/%m/%y", "%d-%m-%y", "%d %b %y", "%d-%b-%y", "%d %B %Y"):
+            try:
+                return datetime.strptime(date_str.strip(), pattern).strftime("%Y-%m-%d")
+            except ValueError:
+                pass
 
         # Already in ISO format
         try:
@@ -1655,6 +1415,17 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
                             all_transactions.extend(page_txns)
                             break
                     except Exception as e:
+                        err = str(e)
+                        # Free-tier Gemini is often permanently quota-blocked.
+                        # Do not burn retries - skip straight to Z.AI.
+                        if _is_quota_error(err):
+                            logger.warning(
+                                "      [FALLBACK] Gemini quota/rate limit hit on page "
+                                f"{page_num}: {err}. Skipping Gemini entirely."
+                            )
+                            raise RuntimeError(
+                                f"GEMINI_QUOTA_EXHAUSTED: {err}"
+                            ) from e
                         if attempt == 1:
                             logger.error(f"      [WARN] Page {page_num} extraction failed: {e}")
                         else:
@@ -1663,7 +1434,10 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             return doc_type_found or "unknown", all_transactions
             
         except Exception as e:
-            logger.error(f"[FAIL] Gemini vision extraction failed entirely: {e}")
+            if _is_quota_error(str(e)):
+                logger.warning(f"[FALLBACK] Gemini vision skipped (quota): {e}")
+            else:
+                logger.error(f"[FAIL] Gemini vision extraction failed entirely: {e}")
             return "unknown", []
 
     def _extract_with_zai_vision(self, pdf_bytes: bytes, password: str) -> Tuple[str, List[Dict]]:
@@ -1677,62 +1451,192 @@ Return ONLY a perfectly formed JSON object matching the requested schema. No mar
             buffer = io.BytesIO()
             image.save(buffer, format="JPEG", quality=85, optimize=True)
             image_uri = "data:image/jpeg;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
-            prompt = self.EXTRACTION_PROMPT + f"\n\nThis is page {page_num}. Return only JSON."
-            with observe_external_llm("zai", settings.ZAI_VISION_MODEL, kind="ocr_vision") as span:
-                response = self.zai_vision_model.invoke([
-                    HumanMessage(content=[
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": image_uri}},
-                    ])
-                ])
-                span.response = response
-            content = response.content
-            if isinstance(content, list):
-                content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
-            doc_type, page_txns = self._parse_json_response(str(content))
+            base_prompt = self.EXTRACTION_PROMPT + f"\n\nThis is page {page_num}. Return only JSON."
+            last_parse_error: Optional[Exception] = None
+            for attempt in range(2):
+                prompt = base_prompt if attempt == 0 else (
+                    base_prompt + "\nCRITICAL: Respond with STRICT valid JSON only. "
+                    "No markdown, no commentary, no trailing text."
+                )
+                try:
+                    with observe_external_llm("zai", settings.ZAI_VISION_MODEL, kind="ocr_vision") as span:
+                        response = self.zai_vision_model.invoke([
+                            HumanMessage(content=[
+                                {"type": "text", "text": prompt},
+                                {"type": "image_url", "image_url": {"url": image_uri}},
+                            ])
+                        ])
+                        span.response = response
+                    content = response.content
+                    if isinstance(content, list):
+                        content = "".join(part.get("text", "") for part in content if isinstance(part, dict))
+                    doc_type, page_txns = self._parse_json_response(str(content))
+                    last_parse_error = None
+                    break
+                except ValueError as e:
+                    last_parse_error = e
+                    logger.warning(
+                        "[PARSE] Z.AI page %d attempt %d failed JSON parse: %s",
+                        page_num, attempt + 1, e,
+                    )
+                except Exception as e:
+                    last_parse_error = e
+                    logger.warning(
+                        "[FALLBACK] Z.AI vision page %d attempt %d error: %s",
+                        page_num, attempt + 1, e,
+                    )
+                    break
+            if last_parse_error is not None:
+                raise RuntimeError(
+                    f"ZAI_GLM_VISION_FALLBACK failed on page {page_num}: {last_parse_error}"
+                ) from last_parse_error
             if doc_type and doc_type != "unknown" and not doc_type_found:
                 doc_type_found = doc_type
             all_transactions.extend(page_txns)
         return doc_type_found or "unknown", all_transactions
 
     def _extract_with_deterministic_pdf_text(self, pdf_bytes: bytes, password: str) -> Tuple[str, List[Dict]]:
-        """Conservative fallback for text-based statements when all vision APIs fail."""
+        """Conservative fallback for text-based statements when all vision APIs fail.
+
+        Handles multi-line table rows where SI, date, description, amount and
+        balance each appear on their own line (e.g. Union Bank statements).
+        Debit/credit direction is inferred from running-balance deltas, with
+        narration keywords as a tie-breaker for the first row.
+        """
         doc = fitz.open(stream=pdf_bytes, filetype="pdf")
-        if doc.needs_pass and password:
-            doc.authenticate(password)
-        transactions: List[Dict] = []
-        date_pattern = re.compile(r"^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(.*)$")
-        amount_pattern = re.compile(r"(?<![A-Za-z0-9])[₹$]?\s*([\d,]+(?:\.\d{1,2})?)(?![A-Za-z0-9])")
+        if doc.needs_pass:
+            if not password or not doc.authenticate(password):
+                doc.close()
+                raise ValueError("Incorrect password for PDF")
+
+        date_only = re.compile(r"^\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*$")
+        money_only = re.compile(r"^\s*â‚¹?\s*([\d,]+\.\d{2})\s*(Cr|Dr)?\.?\s*$", re.IGNORECASE)
+        si_only = re.compile(r"^\s*\d{1,4}\s*$")
+
+        all_lines: List[str] = []
         for page in doc:
-            for line in (page.get_text("text") or "").splitlines():
-                match = date_pattern.match(line)
-                amounts = list(amount_pattern.finditer(line))
-                if not match or not amounts:
-                    continue
-                raw_date = match.group(1).replace("-", "/").split("/")
-                if len(raw_date) != 3:
-                    continue
-                day, month, year = (part.zfill(2) for part in raw_date)
-                if len(year) == 2:
-                    year = "20" + year
-                parsed_date = self._parse_date(f"{day}/{month}/{year}")
-                if not parsed_date:
-                    continue
-                amount_match = amounts[-2] if len(amounts) >= 2 else amounts[-1]
-                amount = float(amount_match.group(1).replace(",", ""))
-                description = line[match.end(1):amount_match.start()].strip(" -|\t")[:200]
-                if not description or amount <= 0:
-                    continue
-                is_credit = any(keyword in description.lower() for keyword in self.credit_keywords)
-                transactions.append({
-                    "date": parsed_date,
-                    "description": description,
-                    "debit": 0.0 if is_credit else amount,
-                    "credit": amount if is_credit else 0.0,
-                    "amount": amount,
-                    "balance": 0.0,
-                })
+            all_lines.extend((page.get_text("text") or "").splitlines())
         doc.close()
+
+        # A pure date line starts a row; collect until the balance (Cr/Dr)
+        # suffix, the next date, or an SI index that follows money.
+        parsed_rows: List[Dict] = []
+        i = 0
+        while i < len(all_lines):
+            date_match = date_only.match(all_lines[i])
+            if not date_match:
+                i += 1
+                continue
+            raw_date = date_match.group(1)
+            i += 1
+            # Skip an SI index sitting between the prior row and the date.
+            if i < len(all_lines) and si_only.match(all_lines[i]) and not date_only.match(all_lines[i]):
+                # Only skip if this integer is not itself starting money context.
+                # Dates are already consumed; bare integers before description are SI.
+                if i + 1 >= len(all_lines) or not money_only.match(all_lines[i + 1] or ""):
+                    # SI appears before the date in some layouts and after in others;
+                    # here the date was just consumed, so a following integer is
+                    # unlikely part of this row's description â€” leave it for desc
+                    # collection below unless it clearly begins the next SI+date pair.
+                    pass
+            desc_parts: List[str] = []
+            money_parts: List[Tuple[float, bool, str]] = []
+            while i < len(all_lines):
+                line = all_lines[i]
+                if date_only.match(line):
+                    break
+                money_match = money_only.match(line)
+                if money_match:
+                    value = float(money_match.group(1).replace(",", ""))
+                    has_suffix = bool(money_match.group(2))
+                    money_parts.append((value, has_suffix, line.strip()))
+                    i += 1
+                    if has_suffix:
+                        break
+                    continue
+                if money_parts and si_only.match(line):
+                    break
+                if not money_parts and not desc_parts and si_only.match(line):
+                    i += 1
+                    continue
+                if line.strip():
+                    desc_parts.append(line.strip())
+                i += 1
+            if not money_parts:
+                continue
+
+            balance_val: Optional[float] = None
+            amount_vals: List[float] = []
+            for idx, (val, has_suffix, _raw) in enumerate(money_parts):
+                if has_suffix and idx == len(money_parts) - 1:
+                    balance_val = val
+                else:
+                    amount_vals.append(val)
+            if balance_val is None:
+                balance_val = money_parts[-1][0]
+                amount_vals = [m[0] for m in money_parts[:-1]]
+            nonzero = [a for a in amount_vals if a > 0]
+            if not nonzero:
+                continue
+            amount = nonzero[0] if len(nonzero) == 1 else sum(nonzero)
+
+            parsed_date = self._parse_date(raw_date.replace("/", "-"))
+            if not parsed_date:
+                parts = re.split(r"[/-]", raw_date)
+                if len(parts) == 3:
+                    day, month, year = parts
+                    if len(year) == 2:
+                        year = "20" + year
+                    parsed_date = self._parse_date(f"{day.zfill(2)}/{month.zfill(2)}/{year}")
+            if not parsed_date:
+                continue
+
+            description = " ".join(desc_parts).strip(" -|\t")[:200] or "Transaction"
+            parsed_rows.append({
+                "date": parsed_date,
+                "description": description,
+                "amount": amount,
+                "balance": balance_val,
+            })
+
+        transactions: List[Dict] = []
+        prev_balance: Optional[float] = None
+        for row in parsed_rows:
+            amount = row["amount"]
+            balance_val = row["balance"]
+            description = row["description"]
+            is_credit: Optional[bool] = None
+            if prev_balance is not None and balance_val is not None:
+                if abs(balance_val - prev_balance - amount) < 0.011:
+                    is_credit = True
+                elif abs(prev_balance - balance_val - amount) < 0.011:
+                    is_credit = False
+                elif balance_val > prev_balance:
+                    is_credit = True
+                elif balance_val < prev_balance:
+                    is_credit = False
+            if is_credit is None:
+                lowered = description.lower()
+                if "/cr/" in lowered or "credit" in lowered or "deposit" in lowered or "salary" in lowered:
+                    is_credit = True
+                elif "/dr/" in lowered or "debit" in lowered or "withdrawal" in lowered:
+                    is_credit = False
+                else:
+                    is_credit = any(k in lowered for k in self.credit_keywords)
+            transactions.append({
+                "date": row["date"],
+                "description": description,
+                "debit": 0.0 if is_credit else amount,
+                "credit": amount if is_credit else 0.0,
+                "amount": amount,
+                "balance": balance_val if balance_val is not None else 0.0,
+            })
+            prev_balance = balance_val if balance_val is not None else prev_balance
+
+        logger.info(
+            "[FALLBACK] DETERMINISTIC_PDF_TEXT extracted %d transactions from multi-line text",
+            len(transactions),
+        )
         return "bank_statement", transactions
 
     def _pdf_to_images(self, pdf_bytes: bytes, password: str) -> List[Image.Image]:

@@ -15,6 +15,7 @@ from .llm_provider import build_llm, build_structured_llm
 from . import models
 
 logger = logging.getLogger(__name__)
+_LLM_SEMAPHORE = asyncio.Semaphore(max(1, settings.LLM_MAX_CONCURRENCY))
 
 # --- Telemetry Config ---
 LOG_DIR = Path("logs/categorization")
@@ -89,9 +90,11 @@ class MerchantIntelligence:
         r"UBER|OLA|RAPIDO": ("Transportation", "Ride Hailing"),
         r"NETFLIX|SPOTIFY|PRIME VIDEO": ("Entertainment", "Subscription"),
         r"AIRTEL|JIO|VODAFONE": ("Bills & Utilities", "Telecom"),
+        r"BSNL": ("Bills & Utilities", "Telecom"),
         r"IRCTC|INDIGO|MAKEMYTRIP|SRM TRAVELS": ("Travel", "Tickets"),
         r"STARBUCKS|CHAIPOINT|BLUE TOKAI": ("Food & Dining", "Cafe"),
-        r"APOLLO|PHARMACY|CLINIC|MEDPLUS|HOSPITAL": ("Healthcare", "Medical")
+        r"APOLLO|PHARMACY|CLINIC|MEDPLUS|HOSPITAL": ("Healthcare", "Medical"),
+        r"ICCL|JM FINAN(?:CIAL)?|JMFSERVICES|MFAUTOPAY": ("Investment", "Stocks & MF"),
     }
 
     @classmethod
@@ -133,6 +136,8 @@ class CategorizationAgent:
     
     def __init__(self, model_name: Optional[str] = None):
         model_name = model_name or settings.GEMINI_MODEL
+        self._active_corrections: Dict[str, str] = {}
+        self._active_user_id: Optional[str] = None
         self.llm = build_llm(model_name, temperature=0)
         self.structured_llm = build_structured_llm(BatchCategorization, model_name, temperature=0)
         
@@ -155,19 +160,15 @@ class CategorizationAgent:
 
         @tool
         async def user_history_tool(description: str) -> str:
-            """Check historical corrections from MongoDB using extracted identity."""
+            """Check the corrections loaded once for this processing job."""
             # Use the intelligent merchant identity extractor
             identity = self._extract_merchant_identity(description)
             if not identity:
                 return "No clear merchant identity found in description."
                 
-            # Exact match on the extracted identity keyword
-            match = await models.Correction.find_one({
-                "transaction_description_keyword": identity
-            })
-            
-            if match:
-                return f"SUCCESS: Found user correction for '{identity}' -> {match.correct_category}"
+            category = self._active_corrections.get(identity.casefold())
+            if category:
+                return f"SUCCESS: Found user correction for '{identity}' -> {category}"
             return f"No historical correction for identity: '{identity}'"
 
         @tool
@@ -238,6 +239,13 @@ class CategorizationAgent:
         clean = re.sub(r'[*]+', '', clean).strip()
         return clean[:40]
 
+    @staticmethod
+    def _categorization_description(transaction: Dict[str, Any]) -> str:
+        """Combine masked narration with an optional privacy-safe label."""
+        description = str(transaction.get("description") or "")
+        merchant_label = str(transaction.get("merchant_label") or "").strip()
+        return f"{description} MERCHANT:{merchant_label}" if merchant_label else description
+
     @classmethod
     async def propagate_category(cls, user_id: str, pattern: str, correct_category: str):
         """Propagates a category update to all similar transactions for a user."""
@@ -278,13 +286,18 @@ class CategorizationAgent:
         query = f"{self.investigator_prompt}\n\nInvestigate and categorize: {json.dumps(transaction)}. Follow tool priority strictly."
         
         try:
-            result = await self.investigator.ainvoke({"messages": [("human", query)]})
+            async with _LLM_SEMAPHORE:
+                result = await self.investigator.ainvoke(
+                    {"messages": [("human", query)]},
+                    config={"recursion_limit": settings.LLM_AGENT_RECURSION_LIMIT},
+                )
             last_msg = result["messages"][-1].content
             
             # Final structuring back to Pydantic
-            final = await self.llm.with_structured_output(CategorizationResult).ainvoke(
-                f"Extract 'category', 'subcategory', and 'reasoning' from this investigation: {last_msg}. Set source='agent' and confidence=0.85."
-            )
+            async with _LLM_SEMAPHORE:
+                final = await self.llm.with_structured_output(CategorizationResult).ainvoke(
+                    f"Extract 'category', 'subcategory', and 'reasoning' from this investigation: {last_msg}. Set source='agent' and confidence=0.85."
+                )
             return final
         except Exception as e:
             logger.error(f"Investigator failed: {e}")
@@ -325,13 +338,33 @@ class CategorizationAgent:
         except Exception as e:
             logger.error(f"Failed to write trace log: {e}")
 
-    async def categorize_transactions(self, transactions: List[Dict], user_id: str = None, user_name: str = "User", streaming_id: str = None) -> List[Dict]:
+    async def categorize_transactions(
+        self,
+        transactions: List[Dict],
+        user_id: str = None,
+        user_name: str = "User",
+        streaming_id: str = None,
+        corrections: Optional[List[Dict]] = None,
+    ) -> List[Dict]:
         """Reasoning-First Intelligence: History -> Merchant -> LLM Reasoning -> Rule Fallback."""
         if not transactions: return []
         
         from .log_streamer import log_streamer
         if streaming_id:
             await log_streamer.add_log(streaming_id, f"[CAT] Starting deep reasoning for {len(transactions)} transactions...", "info", 65)
+
+        if corrections is None and user_id:
+            correction_documents = await models.Correction.find(
+                models.Correction.user_id == user_id
+            ).to_list()
+            corrections = [document.model_dump() for document in correction_documents]
+        corrections = corrections or []
+        self._active_user_id = user_id
+        self._active_corrections = {
+            str(item.get("transaction_description_keyword") or "").casefold(): str(item.get("correct_category") or "Other")
+            for item in corrections
+            if item.get("transaction_description_keyword")
+        }
 
         final_results = []
         remaining_indices = []
@@ -352,17 +385,19 @@ class CategorizationAgent:
                 logger.warning(f"Error loading user corrections: {e}")
 
         for i, txn in enumerate(transactions):
-            desc = txn.get('description', '')
+            desc = self._categorization_description(txn)
             amt = float(txn.get('amount', 0))
             # Determine credit/debit status for rule matching
             is_credit = txn.get('type') == 'credit' or float(txn.get('credit', 0)) > 0
 
             identity = self._extract_merchant_identity(desc)
-
-            # --- PHASE 0: User Correction Priority (in-memory lookup) ---
-            if identity and identity in correction_map:
+            # --- PHASE 0: User Correction Priority (case-insensitive) ---
+            corrected_category = self._active_corrections.get(identity.casefold())
+            if not corrected_category and identity in correction_map:
+                corrected_category = correction_map[identity]
+            if corrected_category:
                 txn.update({
-                    "category": correction_map[identity],
+                    "category": corrected_category,
                     "subcategory": "User Preference",
                     "confidence": 1.0,
                     "reasoning": f"Matched previous user correction for '{identity}'",
@@ -394,9 +429,8 @@ class CategorizationAgent:
             todo_txns = [transactions[idx] for idx in remaining_indices]
             # Config-driven so free tier stays polite and enterprise tiers can
             # raise throughput via env with zero code changes.
-            batch_size = max(1, settings.LLM_BATCH_SIZE)
-            max_parallel = max(1, settings.LLM_MAX_CONCURRENT_BATCHES)
-
+            batch_size = max(1, settings.CATEGORIZATION_BATCH_SIZE)
+            max_parallel = max(1, getattr(settings, "LLM_MAX_CONCURRENT_BATCHES", settings.LLM_MAX_CONCURRENCY))
             if streaming_id:
                 await log_streamer.add_log(streaming_id, f"LLM Brain analyzing {len(todo_txns)} merchants in parallel...", "info", 70)
 
@@ -454,10 +488,11 @@ User Name: {user_name} (Used to identify self-transfers)
         
         try:
             logger.info(f"   [BATCH] Processing {len(batch)} transactions starting at index {start_offset}...")
-            llm_batch = await (prompt | self.structured_llm).ainvoke({
-                "count": len(batch),
-                "batch": json.dumps(batch)
-            })
+            async with _LLM_SEMAPHORE:
+                llm_batch = await (prompt | self.structured_llm).ainvoke({
+                    "count": len(batch),
+                    "batch": json.dumps(batch)
+                })
             
             for k, res in enumerate(llm_batch.transactions):
                 if k >= len(batch): break 
@@ -466,7 +501,7 @@ User Name: {user_name} (Used to identify self-transfers)
                 # Confidence Fallback
                 if res.confidence < 0.70:
                     rule_match = RuleEngine.match(
-                        transactions[target_idx].get('description'),
+                        self._categorization_description(transactions[target_idx]),
                         amount=float(transactions[target_idx].get('amount', 0)),
                         is_credit=transactions[target_idx].get('type') == 'credit' or float(transactions[target_idx].get('credit', 0)) > 0
                     )
@@ -486,7 +521,7 @@ User Name: {user_name} (Used to identify self-transfers)
             for k in range(len(batch)):
                 idx = remaining_indices[start_offset + k]
                 rule_match = RuleEngine.match(
-                    transactions[idx].get('description'),
+                    self._categorization_description(transactions[idx]),
                     amount=float(transactions[idx].get('amount', 0)),
                     is_credit=transactions[idx].get('type') == 'credit' or float(transactions[idx].get('credit', 0)) > 0
                 )

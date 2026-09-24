@@ -64,7 +64,7 @@ const Corrections = () => {
       <motion.div 
         initial={{ opacity: 0, y: -20 }}
         animate={{ opacity: 1, y: 0 }}
-        className="card bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200"
+        className="card bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200 dark:from-blue-900/40 dark:to-indigo-900/40 dark:border-blue-800/50"
       >
         <div className="flex items-start gap-4">
           <div className="w-10 h-10 bg-blue-500 rounded-lg flex items-center justify-center flex-shrink-0">
@@ -72,7 +72,7 @@ const Corrections = () => {
           </div>
           <div>
             <h3 className="font-semibold text-gray-900 mb-2">Teach the AI</h3>
-            <p className="text-sm text-gray-700">
+            <p className="text-sm text-gray-700 dark:text-slate-300">
               Help improve transaction categorization by providing corrections. When you specify a keyword 
               and its correct category, the AI will learn and automatically apply this rule to future transactions 
               containing that keyword.

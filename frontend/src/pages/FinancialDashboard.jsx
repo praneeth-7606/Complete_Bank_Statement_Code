@@ -5,7 +5,6 @@ import {
   TrendingDown,
   Wallet,
   FileText,
-  ArrowUpRight,
   DollarSign,
   PieChart,
   Upload as UploadIcon,
@@ -40,28 +39,24 @@ const FinancialDashboard = () => {
       setLoading(true)
 
       // Fetch all statements from backend
-      const statements = await statementsAPI.getAllStatements()
+      const statementResponse = await statementsAPI.getAllStatements()
+      const statements = statementResponse?.statements || []
 
-      if (statements && statements.length > 0) {
-        let allTransactions = []
-        let totalIncome = 0
-        let totalExpenses = 0
-
-        // Fetch transactions from each statement
-        for (const statement of statements) {
-          try {
-            const details = await statementsAPI.getStatementDetails(statement.upload_id)
-            if (details.transactions && Array.isArray(details.transactions)) {
-              allTransactions = [...allTransactions, ...details.transactions]
-            }
-          } catch (error) {
-            console.warn(`Failed to fetch details for statement ${statement.upload_id}:`, error)
-          }
-        }
+      if (statements.length > 0) {
+        // These requests are independent; parallelize them to avoid an N+1
+        // waterfall when a user has many statements.
+        const details = await Promise.allSettled(
+          statements.map(statement => statementsAPI.getStatementDetails(statement.upload_id))
+        )
+        const allTransactions = details.flatMap(result =>
+          result.status === 'fulfilled' && Array.isArray(result.value?.transactions)
+            ? result.value.transactions
+            : []
+        )
 
         // Calculate stats from backend data
-        totalIncome = allTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
-        totalExpenses = allTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
+        const totalIncome = allTransactions.reduce((sum, t) => sum + (parseFloat(t.credit) || 0), 0)
+        const totalExpenses = allTransactions.reduce((sum, t) => sum + (parseFloat(t.debit) || 0), 0)
         const balance = totalIncome - totalExpenses
 
         // Update state with backend data
@@ -81,59 +76,16 @@ const FinancialDashboard = () => {
           category: t.category || 'Uncategorized'
         })))
 
-        // Save to localStorage as cache
-        const dashboardData = {
-          stats: {
-            totalTransactions: allTransactions.length,
-            totalIncome: totalIncome,
-            totalExpenses: totalExpenses,
-            balance: balance,
-          },
-          allTransactions: allTransactions,
-          recentTransactions: allTransactions.slice(0, 10).map(t => ({
-            description: t.description || 'N/A',
-            date: t.date || 'N/A',
-            amount: parseFloat(t.credit || t.debit || 0),
-            type: parseFloat(t.credit || 0) > 0 ? 'credit' : 'debit',
-            category: t.category || 'Uncategorized'
-          }))
-        }
-        localStorage.setItem('dashboardData', JSON.stringify(dashboardData))
       } else {
-        // No statements from backend - use localStorage fallback
-        const savedData = localStorage.getItem('dashboardData')
-        if (savedData) {
-          try {
-            const data = JSON.parse(savedData)
-            if (data.stats) {
-              setStats(data.stats)
-            }
-            if (data.recentTransactions) {
-              setRecentTransactions(data.recentTransactions)
-            }
-          } catch (error) {
-            console.error('Error loading cached dashboard data:', error)
-          }
-        }
+        setStats({ totalTransactions: 0, totalIncome: 0, totalExpenses: 0, balance: 0 })
+        setRecentTransactions([])
       }
     } catch (error) {
       console.error('Error fetching dashboard data:', error)
-
-      // Fallback to localStorage
-      const savedData = localStorage.getItem('dashboardData')
-      if (savedData) {
-        try {
-          const data = JSON.parse(savedData)
-          if (data.stats) {
-            setStats(data.stats)
-          }
-          if (data.recentTransactions) {
-            setRecentTransactions(data.recentTransactions)
-          }
-        } catch (e) {
-          console.error('Error loading cached data:', e)
-        }
-      }
+      // Never display stale financial data from a previous account. The page
+      // remains empty until the authenticated backend responds successfully.
+      setStats({ totalTransactions: 0, totalIncome: 0, totalExpenses: 0, balance: 0 })
+      setRecentTransactions([])
     } finally {
       setLoading(false)
     }
@@ -149,8 +101,6 @@ const FinancialDashboard = () => {
       color: 'blue',
       bgColor: 'bg-blue-50',
       iconColor: 'text-blue-600',
-      trend: '+12.5%',
-      trendUp: true,
     },
     {
       title: 'Total Income',
@@ -159,8 +109,6 @@ const FinancialDashboard = () => {
       color: 'green',
       bgColor: 'bg-green-50',
       iconColor: 'text-green-600',
-      trend: '+8.2%',
-      trendUp: true,
     },
     {
       title: 'Total Expenses',
@@ -169,8 +117,6 @@ const FinancialDashboard = () => {
       color: 'red',
       bgColor: 'bg-red-50',
       iconColor: 'text-red-600',
-      trend: '-3.1%',
-      trendUp: false,
     },
     {
       title: 'Transactions',
@@ -179,8 +125,6 @@ const FinancialDashboard = () => {
       color: 'purple',
       bgColor: 'bg-purple-50',
       iconColor: 'text-purple-600',
-      trend: '+15',
-      trendUp: true,
     },
   ]
 
@@ -414,7 +358,7 @@ const FinancialDashboard = () => {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ delay: 0.6 }}
-        className="card bg-gradient-to-r from-blue-50 to-green-50"
+        className="card bg-gradient-to-r from-blue-50 to-green-50 border-blue-100 dark:from-blue-900/40 dark:to-emerald-900/40 dark:border-blue-800/50"
       >
         <h3 className="text-2xl font-bold text-gray-900 mb-6 text-center">Why Choose FinanceAI?</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -424,11 +368,11 @@ const FinancialDashboard = () => {
             { icon: MessageSquare, title: 'Chat Assistant', desc: 'Ask questions about your finances' }
           ].map((feature, index) => (
             <div key={index} className="text-center">
-              <div className="w-16 h-16 bg-white rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
-                <feature.icon className="w-8 h-8 text-blue-600" />
+              <div className="w-16 h-16 bg-white dark:bg-slate-800 rounded-full flex items-center justify-center mx-auto mb-4 shadow-md">
+                <feature.icon className="w-8 h-8 text-blue-600 dark:text-blue-400" />
               </div>
               <h4 className="font-bold text-gray-900 mb-2">{feature.title}</h4>
-              <p className="text-sm text-gray-600">{feature.desc}</p>
+              <p className="text-sm text-gray-600 dark:text-slate-300">{feature.desc}</p>
             </div>
           ))}
         </div>

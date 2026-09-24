@@ -1,8 +1,9 @@
 import { useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { Mail, Lock, User, UserPlus, DollarSign, TrendingUp, Shield, Zap } from 'lucide-react'
+import { Mail, Lock, User, UserPlus, DollarSign, TrendingUp, Shield, Zap, Sun, Moon } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
+import { useTheme } from '../context/ThemeContext'
 import toast from 'react-hot-toast'
 import { Button, Input } from '../components/ui'
 
@@ -13,6 +14,7 @@ const Signup = () => {
   const [loading, setLoading] = useState(false)
   const [focusedField, setFocusedField] = useState(null)
   const { signup } = useAuth()
+  const { isDark, toggleTheme } = useTheme()
   const navigate = useNavigate()
 
   const handleSubmit = async (e) => {
@@ -44,7 +46,16 @@ const Signup = () => {
   ]
 
   return (
-    <div className="min-h-screen bg-[#080810] flex items-center justify-center p-4 relative overflow-hidden">
+    <div className="auth-page min-h-screen flex items-center justify-center p-4 relative overflow-hidden">
+      <button
+        type="button"
+        onClick={toggleTheme}
+        className="theme-toggle absolute right-4 top-4 z-20 rounded-xl p-3 shadow-lg transition-colors hover:opacity-80"
+        aria-label={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+        title={`Switch to ${isDark ? 'light' : 'dark'} mode`}
+      >
+        {isDark ? <Sun size={20} /> : <Moon size={20} />}
+      </button>
       {/* Animated Background Elements */}
       <div className="absolute inset-0 overflow-hidden">
         <motion.div
@@ -79,7 +90,7 @@ const Signup = () => {
           initial={{ opacity: 0, x: -50 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.6 }}
-          className="hidden lg:flex flex-col justify-center space-y-8 text-white"
+          className="hidden lg:flex flex-col justify-center space-y-8"
         >
           <div>
             <motion.div
@@ -93,7 +104,7 @@ const Signup = () => {
               </div>
               <div>
                 <h1 className="text-4xl font-bold">FinanceAI</h1>
-                <p className="text-indigo-200">Smart Financial Management</p>
+                <p className="auth-muted">Smart Financial Management</p>
               </div>
             </motion.div>
 
@@ -113,7 +124,7 @@ const Signup = () => {
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.4 }}
-              className="text-lg text-indigo-200 mb-8"
+              className="auth-muted text-lg mb-8"
             >
               Join thousands of users managing their finances smarter with AI-powered insights.
             </motion.p>
@@ -126,7 +137,7 @@ const Signup = () => {
                 initial={{ opacity: 0, x: -20 }}
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5 + index * 0.1 }}
-                className="flex items-center gap-4 p-4 bg-white/10 backdrop-blur-xl rounded-2xl border border-white/20"
+                className="auth-feature flex items-center gap-4 p-4 backdrop-blur-xl rounded-2xl"
               >
                 <div className={`w-12 h-12 bg-gradient-to-br ${feature.color} rounded-xl flex items-center justify-center`}>
                   <feature.icon className="w-6 h-6 text-white" />
@@ -144,7 +155,7 @@ const Signup = () => {
           transition={{ duration: 0.6 }}
           className="flex items-center justify-center"
         >
-          <div className="w-full max-w-md bg-white/[0.03] backdrop-blur-xl rounded-3xl shadow-2xl p-10 border border-white/5">
+          <div className="auth-card w-full max-w-md backdrop-blur-xl rounded-3xl p-10">
             {/* Mobile Logo */}
             <div className="lg:hidden text-center mb-8">
               <motion.div
@@ -165,8 +176,8 @@ const Signup = () => {
               animate={{ opacity: 1, y: 0 }}
               transition={{ delay: 0.2 }}
             >
-              <h2 className="text-3xl font-bold text-white mb-2">Create Account</h2>
-              <p className="text-gray-400 mb-8">Start managing your finances smarter</p>
+              <h2 className="auth-title text-3xl font-bold mb-2">Create Account</h2>
+              <p className="auth-muted mb-8">Start managing your finances smarter</p>
             </motion.div>
 
             <form onSubmit={handleSubmit} className="space-y-4">
@@ -176,11 +187,11 @@ const Signup = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.3 }}
               >
-                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                <label className="auth-label block text-sm font-semibold mb-2">
                   Full Name
                 </label>
                 <div className="relative group">
-                  <User className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'name' ? 'text-indigo-600' : 'text-gray-400'
+                  <User className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'name' ? 'text-indigo-600' : 'text-[var(--text-secondary)]'
                     }`} />
                   <input
                     type="text"
@@ -188,7 +199,7 @@ const Signup = () => {
                     onChange={(e) => setFullName(e.target.value)}
                     onFocus={() => setFocusedField('name')}
                     onBlur={() => setFocusedField(null)}
-                    className="w-full pl-12 pr-4 py-3.5 bg-white/[0.02] border border-white/10 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-white placeholder-gray-500 hover:border-white/20"
+                    className="auth-input w-full pl-12 pr-4 py-3.5 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-[var(--text-secondary)] hover:border-indigo-300"
                     placeholder="John Doe"
                     required
                     minLength={2}
@@ -202,11 +213,11 @@ const Signup = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.4 }}
               >
-                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                <label className="auth-label block text-sm font-semibold mb-2">
                   Email Address
                 </label>
                 <div className="relative group">
-                  <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'email' ? 'text-indigo-600' : 'text-gray-400'
+                  <Mail className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'email' ? 'text-indigo-600' : 'text-[var(--text-secondary)]'
                     }`} />
                   <input
                     type="email"
@@ -214,7 +225,7 @@ const Signup = () => {
                     onChange={(e) => setEmail(e.target.value)}
                     onFocus={() => setFocusedField('email')}
                     onBlur={() => setFocusedField(null)}
-                    className="w-full pl-12 pr-4 py-3.5 bg-white/[0.02] border border-white/10 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-white placeholder-gray-500 hover:border-white/20"
+                    className="auth-input w-full pl-12 pr-4 py-3.5 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-[var(--text-secondary)] hover:border-indigo-300"
                     placeholder="you@example.com"
                     required
                   />
@@ -227,11 +238,11 @@ const Signup = () => {
                 animate={{ opacity: 1, x: 0 }}
                 transition={{ delay: 0.5 }}
               >
-                <label className="block text-sm font-semibold text-gray-300 mb-2">
+                <label className="auth-label block text-sm font-semibold mb-2">
                   Password
                 </label>
                 <div className="relative group">
-                  <Lock className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'password' ? 'text-indigo-600' : 'text-gray-400'
+                  <Lock className={`absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 transition-colors ${focusedField === 'password' ? 'text-indigo-600' : 'text-[var(--text-secondary)]'
                     }`} />
                   <input
                     type="password"
@@ -240,13 +251,13 @@ const Signup = () => {
                     onChange={(e) => setPassword(e.target.value)}
                     onFocus={() => setFocusedField('password')}
                     onBlur={() => setFocusedField(null)}
-                    className="w-full pl-12 pr-4 py-3.5 bg-white/[0.02] border border-white/10 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-white placeholder-gray-500 hover:border-white/20"
+                    className="auth-input w-full pl-12 pr-4 py-3.5 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all placeholder:text-[var(--text-secondary)] hover:border-indigo-300"
                     placeholder="••••••••"
                     required
                     minLength={8}
                   />
                 </div>
-                <p className="text-xs text-gray-500 mt-2 font-medium">
+                <p className="auth-muted text-xs mt-2 font-medium">
                   ✓ Must be at least 8 characters
                 </p>
               </motion.div>
@@ -277,7 +288,7 @@ const Signup = () => {
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ delay: 0.8 }}
-              className="text-center text-sm text-gray-400 mt-8"
+              className="auth-muted text-center text-sm mt-8"
             >
               Already have an account?{' '}
               <Link to="/login" className="text-indigo-400 hover:text-indigo-300 font-bold transition-colors">
