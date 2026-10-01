@@ -10,7 +10,8 @@ import {
   Upload as UploadIcon,
   MessageSquare,
   Calendar,
-  CheckCircle
+  CheckCircle,
+  ArrowUpRight
 } from 'lucide-react'
 import { motion } from 'framer-motion'
 import CountUp from 'react-countup'

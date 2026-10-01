@@ -5,7 +5,7 @@ from bson.decimal128 import Decimal128
 import uuid
 import datetime
 from decimal import Decimal
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Literal, Optional
 
 # --- Beanie Document Models (for MongoDB) ---
 
@@ -185,6 +185,37 @@ class ObservabilityTrace(Document):
         name = "observability_traces"
         indexes = ["trace_id", "request_id", "user_id", "route", "status", "started_at"]
 
+
+class ChatConversation(Document):
+    """A durable, tenant-scoped financial chat conversation."""
+
+    conversation_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    user_id: str
+    title: str = "New conversation"
+    message_count: int = 0
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+    updated_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+    class Settings:
+        name = "chat_conversations"
+        indexes = ["conversation_id", "user_id", "updated_at"]
+
+
+class ChatMessage(Document):
+    """One server-owned message in a financial chat conversation."""
+
+    message_id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    conversation_id: str
+    user_id: str
+    sequence: int
+    role: Literal["user", "assistant"]
+    content: str = Field(min_length=1, max_length=12000)
+    created_at: datetime.datetime = Field(default_factory=datetime.datetime.utcnow)
+
+    class Settings:
+        name = "chat_messages"
+        indexes = ["message_id", "conversation_id", "user_id", "sequence", "created_at"]
+
 # --- Pydantic Models (for API request/response validation) ---
 
 class CorrectionCreate(BaseModel):
@@ -208,8 +239,11 @@ class FullReport(BaseModel):
 
 class ChatQuery(BaseModel):
     """The request model for the chat endpoint."""
-    query: str
-    chat_history: Optional[List[Dict[str, str]]] = None # To support session-based state
+    query: str = Field(min_length=1, max_length=12000)
+    conversation_id: Optional[str] = Field(default=None, max_length=64)
+    # Kept for clients using the investment endpoint. Financial chat ignores it
+    # and retrieves server-owned context from MongoDB instead.
+    chat_history: Optional[List[Dict[str, str]]] = None
     page: int = 1  
     page_size: int = 50 
 

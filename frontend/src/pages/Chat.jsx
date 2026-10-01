@@ -24,6 +24,8 @@ const Chat = () => {
     removeArchived,
     archived,
     activeId,
+    activeConversationId,
+    setActiveConversationId,
   } = useChatSession('rag', WELCOME_TEXT)
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
@@ -86,12 +88,9 @@ const Chat = () => {
     setLoading(true)
 
     try {
-      const history = messages.map(m => ({
-        role: m.role,
-        content: typeof m.content === 'string' ? m.content : (m.content?.data?.answer || "Financial Data")
-      })).slice(-10)
-
-      const response = await chatAPI.sendQuery(input, history)
+      const response = await chatAPI.sendQuery(input, activeConversationId)
+      const conversationId = response?.data?.conversation_id
+      if (conversationId) setActiveConversationId(conversationId)
 
       const assistantMessage = {
         role: 'assistant',

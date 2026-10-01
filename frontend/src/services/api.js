@@ -83,11 +83,11 @@ export const statementAPI = {
 };
 
 export const chatAPI = {
-  // Send chat query with optional history
-  sendQuery: async (query, chatHistory = null) => {
+  // The backend owns durable financial-chat context in MongoDB.
+  sendQuery: async (query, conversationId = null) => {
     const response = await api.post('/chat', {
       query,
-      chat_history: chatHistory
+      conversation_id: conversationId || undefined,
     });
     // response.data = { status, data: { answer, metrics, ... } }
     return response.data;

@@ -24,6 +24,8 @@ async def init_db():
             models.Correction,
             models.ProcessingJob,
             models.ObservabilityTrace,
+            models.ChatConversation,
+            models.ChatMessage,
         ]
     )
     print("Database connection initialized with authentication support.")

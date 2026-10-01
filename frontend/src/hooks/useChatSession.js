@@ -75,6 +75,17 @@ export const useChatSession = (namespace, welcomeText) => {
     }))
   }, [])
 
+  const setActiveConversationId = useCallback((conversationId) => {
+    setState((prev) => ({
+      ...prev,
+      active: {
+        ...prev.active,
+        serverConversationId: conversationId,
+        updatedAt: Date.now(),
+      },
+    }))
+  }, [])
+
   const clearSession = useCallback(() => {
     setState((prev) => archiveAndStartNew(namespace, prev, welcomeText))
   }, [namespace, welcomeText])
@@ -102,6 +113,8 @@ export const useChatSession = (namespace, welcomeText) => {
     removeArchived,
     archived: state.archived || [],
     activeId: state.activeId || state.active?.id,
+    activeConversationId: state.active?.serverConversationId || null,
+    setActiveConversationId,
   }
 }
 

@@ -13,7 +13,7 @@ import hashlib
 import logging
 from decimal import Decimal
 from bson.decimal128 import Decimal128
-from . import models, agents
+from . import chat_memory, models, agents
 from .models import MultiStatementResponse, StatementFile
 from .database import init_db
 from .agentic_rag import AgenticRAGPipeline
@@ -47,11 +47,6 @@ def _decimal_number(value: Any) -> float:
 
 # Initialize SMART EXTRACTOR - Auto-classifies PDFs and uses best method
 smart_extractor = None  # Will be initialized on first use
-
-# Global in-memory session history (simple version)
-# In production, this would be in Redis or MongoDB
-SESSION_HISTORY: Dict[str, List[Dict[str, str]]] = {}
-
 
 def _validate_pdf_upload(upload: UploadFile, content: bytes) -> None:
     """Reject unsafe or unprocessable uploads before invoking paid AI services."""
@@ -816,18 +811,20 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
     # Enhanced logging for debugging
     logger.info("="*80)
     logger.info(f"[CHAT_REQUEST] user={current_user.email}")
-    logger.info(f"[CHAT_QUERY] {query.query}")
+    logger.info(f"[CHAT_QUERY] {len(query.query)} characters")
     logger.info(f"[CHAT_USER_ID] {current_user.user_id}")
     
     try:
         user_id = str(current_user.user_id)
         
-        # 1. Determine history (Favor frontend-passed history, fallback to server-side)
-        history = query.chat_history
-        if history is None:
-            history = SESSION_HISTORY.get(user_id, [])
-        
-        logger.info(f"[CHAT_HISTORY] {len(history)} messages")
+        # The server is the source of truth for financial-chat memory. Never
+        # accept browser-provided history, which can be tampered with or lost.
+        conversation = await chat_memory.resolve_conversation(
+            user_id, query.conversation_id
+        )
+        history = await chat_memory.recent_history(user_id, conversation.conversation_id)
+        await chat_memory.append_message(conversation, user_id, "user", query.query)
+        logger.info(f"[CHAT_HISTORY] {len(history)} MongoDB messages")
 
         # 2. Run Pipeline
         logger.info("[RAG_START] Starting RAG pipeline")
@@ -863,12 +860,9 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
         logger.info(f"   - Transactions: {len(transactions)}")
         logger.info(f"   - Processing time: {processing_time}ms")
 
-        # 3. Update server-side history (Store only text to minimize tokens)
-        new_history = history + [
-            {"role": "user", "content": query.query},
-            {"role": "assistant", "content": answer}
-        ]
-        SESSION_HISTORY[user_id] = new_history[-15:]
+        # Persist the model answer after a successful pipeline run. The RAG
+        # prompt sees only the bounded history loaded before this new turn.
+        await chat_memory.append_message(conversation, user_id, "assistant", answer)
         
         logger.info("[CHAT_COMPLETE] Chat request completed successfully")
         logger.info("="*80)
@@ -882,7 +876,8 @@ async def chat_with_transactions(query: models.ChatQuery, current_user: models.U
                 "transactions": transactions,
                 "plan": result.get("plan"),
                 "metrics_raw": result.get("metrics_raw"),
-                "processing_time_ms": processing_time
+                "processing_time_ms": processing_time,
+                "conversation_id": conversation.conversation_id,
             }
         }
 
@@ -1721,7 +1716,7 @@ async def purge_my_data(
     Only ever touches the caller's own data.
     """
     try:
-        uid = current_user.user_id
+        uid = str(current_user.user_id)
         uploads = await models.Upload.find(models.Upload.user_id == uid).to_list()
         upload_ids = set()
         for u in uploads:
@@ -1743,7 +1738,15 @@ async def purge_my_data(
             models.Transaction.user_id == uid
         ).delete()
 
-        # 3. Upload records
+        # 3. Durable financial-chat memory
+        messages_result = await models.ChatMessage.find(
+            models.ChatMessage.user_id == uid
+        ).delete()
+        conversations_result = await models.ChatConversation.find(
+            models.ChatConversation.user_id == uid
+        ).delete()
+
+        # 4. Upload records
         upload_ids_list = [u.id for u in uploads]
         uploads_deleted = 0
         for u in uploads:
@@ -1756,6 +1759,8 @@ async def purge_my_data(
             "deleted": {
                 "uploads": uploads_deleted,
                 "transactions": txn_result.deleted_count,
+                "chat_messages": messages_result.deleted_count,
+                "chat_conversations": conversations_result.deleted_count,
                 "vector_namespaces_ok": vectors_ok,
                 "vector_namespaces_failed": vectors_failed,
             },
