@@ -36,7 +36,9 @@ def _configured_models(model_name: str, temperature: float, route: str = "struct
             temperature=temperature,
             api_key=settings.ZAI_API_KEY,
             base_url=settings.ZAI_BASE_URL,
-            max_retries=0,
+            # Last-resort provider: allow one SDK backoff/Retry-After retry for
+            # transient 429s. Persistent quota errors still propagate.
+            max_retries=1,
             timeout=settings.LLM_TIMEOUT_SECONDS,
         ),
     }
@@ -95,5 +97,18 @@ def build_structured_llm(
     Binding before fallback is important: Groq must satisfy the same Pydantic
     contract when Gemini is unavailable.
     """
-    structured = [provider.with_structured_output(schema) for provider in _configured_models(model_name or settings.GEMINI_MODEL, temperature, route=route)]
+    structured = []
+    for provider in _configured_models(model_name or settings.GEMINI_MODEL, temperature, route=route):
+        model = getattr(provider, "bound", provider)
+        if isinstance(model, ChatOpenAI):
+            # ChatOpenAI defaults to strict JSON schema. QueryPlan's dynamic
+            # Mongo filters/sort maps cannot satisfy additionalProperties=false.
+            # Tool calling preserves those maps; Pydantic still validates the
+            # returned arguments locally before any downstream consumer runs.
+            bound = provider.with_structured_output(
+                schema, method="function_calling", strict=False,
+            )
+        else:
+            bound = provider.with_structured_output(schema)
+        structured.append(bound)
     return structured[0].with_fallbacks(structured[1:]) if len(structured) > 1 else structured[0]
